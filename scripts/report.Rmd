@@ -1,0 +1,109 @@
+---
+title: "Pan-cancer_cell_line_heterogeneity"
+author: "Daniel Hanhart"
+date: "11/18/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Seurat)
+library(tidyverse)
+library(liana)
+
+```
+
+
+## R Markdown
+
+```{r}
+
+sobj <- readRDS("./../UBELIX/SERSI/run_all_samples/results/Pan_cancer/Annotation/scMRMA/SeuratObject.rds")
+
+sobj_sub <- subset(sobj, subset = Cancer_type == "Breast Cancer")
+
+```
+
+```{r}
+
+DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_integrated")
+DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_RNA")
+DimPlot(sobj, group.by = "pool_id", reduction = "umap_integrated")
+
+```
+```{r}
+
+sobj_sub <- RunPCA(sobj_sub, array = "RNA", dims = 1:30)
+sobj_sub <- RunTSNE(sobj_sub, array = "RNA", dims = 1:30)
+sobj_sub <- RunUMAP(sobj_sub, array = "RNA", dims = 1:30)
+DimPlot(sobj_sub, group.by = "cell_line", reduction = "tsne")
+DimPlot(sobj_sub, group.by = "cell_line", reduction = "umap")
+
+DimPlot(sobj_sub, group.by = "cell_line", reduction = "umap_integrated")
+DimPlot(sobj_sub, group.by = "cell_line", reduction = "umap_RNA")
+DimPlot(sobj_sub, group.by = "pool_id")
+
+```
+
+```{r}
+## LIANA
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("connectome", "logfc", "natmi", "sca", "cellphonedb", "cytotalk",
+                    "call_cellchat", "call_italk")
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+
+    liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+
+    res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+
+    res_df <- res_df[order(res_df$p.adj),]
+
+    return(res_df)
+}
+
+################################################################################
+
+options(error = browser())
+sobj_sub <- subset(sobj, subset = Cancer_type == "Thyroid Cancer")
+
+liana_res <- callLIANA(sobj_sub, anno_level = "Cancer_type")
+
+object <- sobj_sub
+anno_level <- "Cancer_type"
+assay <- "RNA"
+
+DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("connectome")#, "logfc", "natmi", "sca", "cellphonedb", "cytotalk","call_cellchat", "call_italk")
+
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+
+    liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+
+    res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+
+    res_df <- res_df[order(res_df$p.adj),]
+
+
+sce <- object
+############################
+
+```
+
+```{r}
+
+
+```

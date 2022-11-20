@@ -1,0 +1,119 @@
+---
+title: "Pan-cancer_cell_line_heterogeneity"
+author: "Daniel Hanhart"
+date: "11/16/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(Matrix)
+library(tidyverse)
+
+```
+
+## Data
+```{r}
+## prepare initial data (save as sparse matrix, takes a long time and a lot of memory!)
+if(FALSE){
+  umicount_data <- read.table("./SCP542/other/UMIcount_data.txt", header = TRUE, sep = "\t")
+  cell_line <- umicount_data[1,2:length(colnames(umicount_data))]
+  pool_id <- umicount_data[2,2:length(colnames(umicount_data))]
+  umicount_data <- umicount_data[3:nrow(umicount_data),]
+  rownames(umicount_data) <- NULL
+  umicount_data <- umicount_data %>% column_to_rownames("X") 
+  umicount_data_sparse <- as.sparse(umicount_data)
+  saveRDS(umicount_data_sparse, "./tmp/umicount_sparse.rds")
+  saveRDS(cell_line, "./tmp/umicount_sparse_cell_line.rds")
+  saveRDS(pool_id, "./tmp/umicount_sparse_pool_id.rds")
+  
+  cpm_data <- read.table("./SCP542/expression/CPM_data.txt", header = TRUE, sep = "\t")
+  cpm_data <- cpm_data %>% column_to_rownames("GENE")
+  
+  cpm_data_sparse <- as.sparse(cpm_data)
+  
+  saveRDS(cpm_data_sparse, "./tmp/cpm_sparse.rds")
+
+}
+
+
+
+```
+
+
+## create Seurat object
+
+```{r}
+
+header <- scan("./SCP542/metadata/Metadata.txt", nlines = 1, what = character())
+metadata <- read.table("./SCP542/metadata/Metadata.txt", header = FALSE, skip = 2, sep = "\t")
+colnames(metadata) <- header
+
+## create a mapping of cell line to tumor type from metadata (metadata refers to already filtered cells, not all cells present)
+cancer_type_mapping <- metadata %>% select("Cell_line", "Cancer_type") %>% unique()
+
+
+
+umicount_data_sparse <- readRDS("./tmp/umicount_sparse.rds")
+cell_line <- t(readRDS("./tmp/umicount_sparse_cell_line.rds"))
+pool_id <- t(readRDS("./tmp/umicount_sparse_pool_id.rds"))
+
+#cpm_data_sparse <- readRDS("./tmp/cpm_sparse.rds")
+
+sobj_umi <- CreateSeuratObject(umicount_data_sparse, project = "main", assay = "RNA", min.cells = 1, min.features = 1)
+sobj_umi@meta.data$cell_line <- cell_line[,1]
+sobj_umi@meta.data$pool_id <- pool_id[,1]
+
+
+df_mapped <- data.frame(Cell_line = sobj_umi@meta.data$cell_line)
+df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped))) %>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+## doublecheck if still in the correct order?
+table(df_mapped$Cell_line == sobj_umi@meta.data$cell_line)
+
+sobj_umi@meta.data$Cancer_type <- df_mapped$Cancer_type
+
+a <- sobj_umi@meta.data
+
+## check if number of cells per cell_line and pool make sense (280 average stated in paper) here 274 (probably performed in paper after qc cell removal)
+b <- a %>% group_by(cell_line, pool_id) %>% summarize(n = n())
+## check if number of cell lines per pool are correct. same as in paper (between 24-27, 8 for custom)
+c <- a %>% group_by(cell_line,pool_id) %>% summarize(n = n()) %>% group_by(pool_id) %>% summarize(n = n())
+## number of cells per pool (6000 were targeted!)
+d <- a %>% group_by(cell_line,pool_id) %>% summarize(n = n()) %>% group_by(pool_id) %>% summarize(sum = sum(n))
+
+## save the different sequencing pools as separate object, so QC can later be performed
+sobj_split <- SplitObject(sobj_umi, split.by = "pool_id")
+
+dir.create("./Data")
+
+for(n in names(sobj_split)){
+  print(n)
+  so <- sobj_split[[n]]
+  saveRDS(so, paste0("./Data/pool_",n,".rds"))
+}
+
+
+#sobj <- sobj_umi[,colnames(sobj_umi) %in% colnames(sobj_cpm)]
+#sobj <- sobj[rownames(sobj) %in% rownames(sobj_cpm),]
+
+#sobj_cpm <- CreateSeuratObject(cpm_data_sparse, project = "main", assay = "RNA", min.cells = 1, min.features = 1)
+
+#table(sobj_umi@ meta.data$nFeature_RNA >= 2000 & sobj_umi@ meta.data$nFeature_RNA <= 9000)
+#table(colnames(sobj_umi) %in% colnames(sobj_cpm))
+#which(colnames(sobj) %in% colnames(sobj_cpm)[1])
+#sobj <- sobj %>% NormalizeData(normalization.method = "RC", scale.factor = 1e6)
+# sobj_cpm <- sobj_cpm %>% NormalizeData(normalization.method = "RC", scale.factor = 1e6)
+# c <- 
+# g <- rownames(sobj_cpm)[17]
+# FetchData(sobj, vars = g  , cells = colnames(sobj_cpm)[1], slot = "data")
+# FetchData(sobj_cpm, vars = g  , cells = colnames(sobj_cpm)[1],  slot = "counts")
+# 
+# a <- colnames(sobj_umi)
+# b <- metadata$NAME
+
+```
+
+
+
+

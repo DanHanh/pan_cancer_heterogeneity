@@ -1,0 +1,10 @@
+patient,status,sample,path
+p6,1,pool_6,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_6.rds
+p9,1,pool_9,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_9.rds
+p10,1,pool_10,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_10.rds
+p15,1,pool_15,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_15.rds
+p16,1,pool_16,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_16.rds
+p18,1,pool_18,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_18.rds
+p19,1,pool_19,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_19.rds
+p22,1,pool_22,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_22.rds
+pcustom,1,pool_custom,/storage/homefs/dh15c068/run/SERSI/Pan-cancer_cell_line_heterogeneity/Data/pool_custom.rds
