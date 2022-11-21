@@ -19,8 +19,21 @@ library(liana)
 
 ```{r}
 
-sobj <- readRDS("./../UBELIX/SERSI/run_all_samples/results/Pan_cancer/Annotation/scMRMA/SeuratObject.rds")
+#sobj <- readRDS("/media/triller/Expansion/PHD/Pan-cancer_cell_line_heterogeneity/SERSI/run_all_samples/results/Pan_cancer/Annotation/scMRMA/SeuratObject.rds")
+#saveRDS(sobj,file = "./../local/SeuratObject.rds")
 
+sobj <- readRDS("./../local/SeuratObject.rds")
+
+## add Cancer types to data
+cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+df_mapped <- data.frame(Cell_line = sobj@meta.data$cell_line)
+df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped))) %>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+## doublecheck if still in the correct order?
+table(df_mapped$Cell_line == sobj@meta.data$cell_line)
+sobj@meta.data$Cancer_type <- df_mapped$Cancer_type
+
+
+## remove the cells that have no 
 sobj_sub <- subset(sobj, subset = Cancer_type == "Breast Cancer")
 
 ```
@@ -45,6 +58,50 @@ DimPlot(sobj_sub, group.by = "cell_line", reduction = "umap_RNA")
 DimPlot(sobj_sub, group.by = "pool_id")
 
 ```
+## not workng with only one cell identity!!!
+
+```{r}
+library(CellChat)
+options(stringsAsFactors = FALSE)
+Idents(sobj_sub) <- "Cancer_type"
+
+
+labels <- paste0("cluster_",Seurat::Idents(sobj_sub))
+meta <- data.frame(group = labels, row.names = names(labels))
+
+cc <- createCellChat(GetAssayData(sobj_sub, assay = "RNA", slot = "data"), meta = meta, group.by = "group")
+
+
+#cc <- createCellChat(object = sobj_sub, sobj_sub@meta.data, group.by = "Cancer_type", assay = "RNA")
+#cc <- createCellChat(object = GetAssayData(sobj_sub, assay = "RNA", slot = "data"), meta = sobj_sub@meta.data)
+
+levels(cc@idents)
+
+CellChatDB <- CellChatDB.human
+#CellChatDB.use <- subsetDB(CellChatDB)
+cc@DB <- CellChatDB
+
+cc <- subsetData(cc)
+
+
+
+
+cc <- identifyOverExpressedGenes(cc)
+cc <- identifyOverExpressedInteractions(cc)
+
+#cc <- projectData(cc, PPI.human)
+
+cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+
+cc <- filterCommunication(cc, min.cells = 1)
+
+df <- subsetCommunication(cc)
+
+```
+
+## Run based on pools
+
+sub-select pools, then calculate communication between cancer types present. In the end select only the self communications.
 
 ```{r}
 ## LIANA
@@ -53,8 +110,7 @@ callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
     DefaultAssay(object) <- assay
     object <- SetIdent(object, value = anno_level)
 
-    used_tools <- c("connectome", "logfc", "natmi", "sca", "cellphonedb", "cytotalk",
-                    "call_cellchat", "call_italk")
+    used_tools <- c("connectome", "logfc", "natmi", "sca", "cellphonedb", "cytotalk", "call_cellchat", "call_italk")
     #browser()
     liana_results <- liana_wrap(object, method = used_tools)
     ## remove emppty results (can happen if not enough cells in each cluster)
@@ -72,8 +128,19 @@ callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
 
 ################################################################################
 
-options(error = browser())
-sobj_sub <- subset(sobj, subset = Cancer_type == "Thyroid Cancer")
+#options(error = browser())
+
+unique(sobj@meta.data$pool_id)
+
+sobj_sub <- subset(sobj, subset = pool_id == "6")
+
+sobj_sub <- sobj_sub[,!is.na(sobj_sub@meta.data$Cancer_type)]
+
+sobj_sub@meta.data$Cancer_type <- droplevels(sobj_sub@meta.data$Cancer_type)
+
+#which(!is.na(sobj_sub@meta.data$Cancer_type))
+
+table(sobj_sub@meta.data$Cancer_type)
 
 liana_res <- callLIANA(sobj_sub, anno_level = "Cancer_type")
 

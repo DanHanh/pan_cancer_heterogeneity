@@ -46,18 +46,27 @@ if(FALSE){
 
 ```{r}
 
-header <- scan("./SCP542/metadata/Metadata.txt", nlines = 1, what = character())
-metadata <- read.table("./SCP542/metadata/Metadata.txt", header = FALSE, skip = 2, sep = "\t")
+P <- "/media/triller/Expansion/PHD/Pan-cancer_cell_line_heterogeneity/"
+header <- scan(paste0(P,"./SCP542/metadata/Metadata.txt"), nlines = 1, what = character())
+metadata <- read.table(paste0(P,"./SCP542/metadata/Metadata.txt"), header = FALSE, skip = 2, sep = "\t")
 colnames(metadata) <- header
 
 ## create a mapping of cell line to tumor type from metadata (metadata refers to already filtered cells, not all cells present)
 cancer_type_mapping <- metadata %>% select("Cell_line", "Cancer_type") %>% unique()
 
+## manualy annotate some of the cell lines that are not present in metadata
+cell_type <- c("NCIH2196_LUNG", "SW1116_LARGE_INTESTINE", "BICR18_UPPER_AERODIGESTIVE_TRACT", "EFO27_OVARY", "SNU1076_UPPER_AERODIGESTIVE_TRACT", "SNU81_LARGE_INTESTINE", "OVKATE_OVARY", "SW1463_LARGE_INTESTINE", "SIMA_AUTONOMIC_GANGLIA")
+cancer_type <- c("Lung Cancer", "Colon/Colorectal Cancer", "Head and Neck Cancer", "Ovarian Cancer", "Head and Neck Cancer ", "Colon/Colorectal Cancer ", "Ovarian Cancer", "Colon/Colorectal Cancer ", "Neuroblastoma ")
+ann_df <- data.frame(Cell_line = cell_type, Cancer_type = cancer_type)
+cancer_type_mapping <- rbind(cancer_type_mapping, ann_df) %>% unique()
+
+## save the maping
+saveRDS(cancer_type_mapping, "./../local/cancer_type_mapping.rds")
 
 
-umicount_data_sparse <- readRDS("./tmp/umicount_sparse.rds")
-cell_line <- t(readRDS("./tmp/umicount_sparse_cell_line.rds"))
-pool_id <- t(readRDS("./tmp/umicount_sparse_pool_id.rds"))
+umicount_data_sparse <- readRDS(paste0(P,"./tmp/umicount_sparse.rds"))
+cell_line <- t(readRDS(paste0(P,"./tmp/umicount_sparse_cell_line.rds")))
+pool_id <- t(readRDS(paste0(P,"./tmp/umicount_sparse_pool_id.rds")))
 
 #cpm_data_sparse <- readRDS("./tmp/cpm_sparse.rds")
 
@@ -70,8 +79,10 @@ df_mapped <- data.frame(Cell_line = sobj_umi@meta.data$cell_line)
 df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped))) %>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
 ## doublecheck if still in the correct order?
 table(df_mapped$Cell_line == sobj_umi@meta.data$cell_line)
-
 sobj_umi@meta.data$Cancer_type <- df_mapped$Cancer_type
+
+#not_annotated_cell_lines <- unique(sobj_umi@meta.data$cell_line[is.na(sobj_umi@meta.data$Cancer_type)])
+
 
 a <- sobj_umi@meta.data
 
