@@ -1,0 +1,1841 @@
+---
+title: "Pan-cancer_cell_line_heterogeneity"
+author: "Daniel Hanhart"
+date: "11/18/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Seurat)
+library(tidyverse)
+library(liana)
+library(RobustRankAggreg)
+library(CellChat)
+library(OmnipathR)
+library(pals)
+library(webr)
+library(hash)
+library(Nebulosa)
+library(cluster)
+library(intrinsicDimension)
+library(RSoptSC)
+################################################################################
+## Functions  CellChat #########################################################
+################################################################################
+
+cellchat_wraper <- function(object, group_ident = "cell_line", assay = "RNA", slot = "data"){
+    Idents(object) <- group_ident
+   
+    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
+    meta <- data.frame(group = labels, row.names = names(labels))
+    
+    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    CellChatDB <- CellChatDB.human
+    cc@DB <- CellChatDB
+    
+    cc <- subsetData(cc)
+    
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+    
+    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+    cc <- filterCommunication(cc, min.cells = 1)
+    df <- subsetCommunication(cc, thresh = 1)
+    df$p.adj <- p.adjust(df$pval, "BH")
+    
+    return(df)
+}
+
+cellchat_label_free_wraper <- function(object, group_ident = "seurat_clusters", assay = "RNA", slot = "data"){
+    
+    
+    object <- FindVariableFeatures(object = object)
+    object <- ScaleData(object = object)
+    object <- RunPCA(object)
+    object <- FindNeighbors(object = object)
+    object <- FindClusters(object = object)
+    
+    object@meta.data$seurat_clusters <- paste0("cluster_",object@meta.data$seurat_clusters)
+    
+    object@meta.data$seurat_clusters <- 1:length(object@meta.data$seurat_clusters)
+    Idents(object) <- group_ident
+   
+    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
+    meta <- data.frame(group = labels, row.names = names(labels))
+    
+   
+    
+    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    #cc <- createCellChat(object = object, assay = "RNA", group.by = object@reductions[["pca_RNA"]])
+    CellChatDB <- CellChatDB.human
+    cc@DB <- CellChatDB
+    
+    cc <- subsetData(cc)
+    
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+    
+    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+    #cc <- filterCommunication(cc, min.cells = 0)
+    df <- subsetCommunication(cc, thresh = 1)
+    df$p.adj <- p.adjust(df$pval, "BH")
+    
+    df$ID <- paste0(df$source,"_", df$target,"_" ,df$interaction_name_2)
+    df$source_target <- paste0(df$source,"_", df$target)
+    df <- df[df$p.adj < 0.05,]
+    
+    a <- df %>% group_by(interaction_name_2) %>% summarise(n = n())
+    
+#     
+#     
+# aggregate_ranks <- function(ranked_list){
+#     # aggregate ranks
+#     agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+#     rownames(agg_ranks) <- NULL
+#     # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+#     # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+#     # Then correct for multiple testing for each performed test (ID)
+#     agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+#     agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+#     agg_ranks <- agg_ranks %>% rename(ID = Name)
+#     return(agg_ranks)
+# }
+# 
+# ## make rank aggregation between the different pools
+# 
+# ## create ranked list for each pool (based on the identifiers (ID)).  
+# pools <- unique(df$source_target)
+# ranked_list <- lapply(setNames(pools, pools), function(pool){
+#     # arrange by pval and prob (probability)
+#     re <- df %>% filter(source_target == pool) %>% arrange(pval, desc(prob));
+#     # get ranked list of identifiers
+#     ranked_list <- re$ID;
+#     ranked_list
+# })
+#     
+#     
+#     
+#     a <- aggregate_ranks(ranked_list)
+#     
+    
+    
+    
+    
+    return(df)
+}
+
+
+cellchat_label_free_wraper <- function(object, group_ident = "seurat_clusters", assay = "RNA", slot = "data"){
+    
+    
+    object <- FindVariableFeatures(object = object)
+    object <- ScaleData(object = object)
+    object <- RunPCA(object)
+    object <- FindNeighbors(object = object)
+    object <- FindClusters(object = object)
+    
+    object@meta.data$seurat_clusters <- paste0("cluster_",object@meta.data$seurat_clusters)
+    
+    object@meta.data$seurat_clusters <- 1:length(object@meta.data$seurat_clusters)
+    Idents(object) <- group_ident
+   
+    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
+    meta <- data.frame(group = labels, row.names = names(labels))
+    
+   
+    
+    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    #cc <- createCellChat(object = object, assay = "RNA", group.by = object@reductions[["pca_RNA"]])
+    CellChatDB <- CellChatDB.human
+    cc@DB <- CellChatDB
+    
+    cc <- subsetData(cc)
+    
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+    
+    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+    #cc <- filterCommunication(cc, min.cells = 0)
+    df <- subsetCommunication(cc, thresh = 1)
+    df$p.adj <- p.adjust(df$pval, "BH")
+    
+    df$ID <- paste0(df$source,"_", df$target,"_" ,df$interaction_name_2)
+    df$source_target <- paste0(df$source,"_", df$target)
+    df <- df[df$p.adj < 0.05,]
+    
+    a <- df %>% group_by(interaction_name_2) %>% summarise(n = n())
+    
+#     
+#     
+# aggregate_ranks <- function(ranked_list){
+#     # aggregate ranks
+#     agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+#     rownames(agg_ranks) <- NULL
+#     # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+#     # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+#     # Then correct for multiple testing for each performed test (ID)
+#     agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+#     agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+#     agg_ranks <- agg_ranks %>% rename(ID = Name)
+#     return(agg_ranks)
+# }
+# 
+# ## make rank aggregation between the different pools
+# 
+# ## create ranked list for each pool (based on the identifiers (ID)).  
+# pools <- unique(df$source_target)
+# ranked_list <- lapply(setNames(pools, pools), function(pool){
+#     # arrange by pval and prob (probability)
+#     re <- df %>% filter(source_target == pool) %>% arrange(pval, desc(prob));
+#     # get ranked list of identifiers
+#     ranked_list <- re$ID;
+#     ranked_list
+# })
+#     
+#     
+#     
+#     a <- aggregate_ranks(ranked_list)
+#     
+    
+    
+    
+    
+    return(df)
+}
+```
+
+
+## R Markdown
+
+```{r}
+
+#sobj <- readRDS("/media/triller/Expansion/PHD/Pan-cancer_cell_line_heterogeneity/SERSI/run_all_samples/results/Pan_cancer/Annotation/scMRMA/SeuratObject.rds")
+#saveRDS(sobj,file = "./../local/SeuratObject.rds")
+
+sobj <- readRDS("./../local/SeuratObject.rds")
+
+## add Cancer types to data
+cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+df_mapped <- data.frame(Cell_line = sobj@meta.data$cell_line)
+df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped))) %>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+## doublecheck if still in the correct order?
+table(df_mapped$Cell_line == sobj@meta.data$cell_line)
+sobj@meta.data$Cancer_type <- df_mapped$Cancer_type
+
+
+
+#sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
+#sobj_sub <- subset(sobj_sub, subset = pool_id == "22")
+```
+
+## Omnipathr
+
+```{r}
+
+# library(OmnipathR)
+# ## best tools based on https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02783-y: c("CellChat","CellPhoneDB", "NicheNet", "ICELLNET")
+# ressources <- c("CellChatDB", "CellPhoneDB", "ICELLNET")
+# CellChatDB <- CellChatDB.human
+# 
+# 
+# 
+# net <- OmnipathR::import_intercell_network(ressources = ressources)
+# net_2 <- net %>% OmnipathR::filter_intercell_network(simplify = TRUE)
+
+```
+
+## overview of all the data
+
+The data is analysed based on the sequencing pool. Because of that, there is no batcheffect has to be consideret.
+If we look at the UMAP based on the pool_id, we can see that even between the sequencing pools there is no clear batch effect visible.
+Some cell lines clearly cluster by the cancer type, as we see very well in the case of Skin Cancer (UMAP cluster on the bottom)
+
+```{r}
+
+DimPlot(sobj, group.by = "pool_id", reduction = "umap_RNA", label = FALSE)
+DimPlot(sobj, group.by = "cell_line", reduction = "umap_RNA", label = FALSE) + theme(legend.position = "none")
+DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_RNA", label = FALSE) 
+
+```
+
+## How do the cell cluster based on pools
+ 
+The cells are analysed by their RNA assay and grouped based on their pool_id. 
+recalculate the UMAP, to get a better representation of the subsamples
+
+```{r}
+
+pool_ids <- unique(sobj@meta.data$pool_id)
+
+for(i in pool_ids){
+    print(i)
+    sobj_sub <- subset(sobj, subset = pool_id == i)
+    sobj_sub <- RunPCA(sobj_sub, assay = "RNA")
+    sobj_sub <- RunUMAP(sobj_sub, dims = 1:30, assay = "RNA", reduction = "pca")
+    print(DimPlot(sobj_sub, group.by = "Cancer_type", reduction = "umap", label = FALSE) + ggtitle(paste0("pool_", i)) )
+}
+# theme(legend.position = "none")
+
+```
+
+## amount of cells by pool and cancer type
+
+```{r}
+metadata <- sobj@meta.data %>% group_by(pool_id, Cancer_type, cell_line) %>% summarise(nbr_of_cells = n())
+
+p <- ggplot(metadata, aes(x = pool_id , y = nbr_of_cells, fill = Cancer_type )) +
+    geom_bar(stat = "sum", position = "stack")  + theme_bw() + scale_fill_manual(values=c(kelly()[1:length(kelly())])) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#    facet_grid(.~subtype, scale = "free", space = "free") + labs(title = lev)+ facet_grid(.~pool_id, drop = TRUE, scales = "free", space = "fixed")+ theme(legend.position = "none")
+p
+
+```
+
+## amount of cells by cancer type
+
+```{r}
+metadata <- sobj@meta.data %>% group_by(pool_id, Cancer_type, cell_line) %>% summarise(nbr_of_cells = n())
+
+p <- ggplot(metadata, aes(x = Cancer_type , y = nbr_of_cells, fill = Cancer_type )) +
+    geom_bar(stat = "sum", position = "stack")  + theme_bw() + scale_fill_manual(values=c(kelly()[1:length(kelly())])) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(legend.position = "none")
+#    facet_grid(.~subtype, scale = "free", space = "free") + labs(title = lev)+ facet_grid(.~pool_id, drop = TRUE, scales = "free", space = "fixed")+ theme(legend.position = "none")
+p
+
+```
+
+## clean code
+
+Because we do not have different cell types, the communication is run between the different cell lines inside each pool.
+
+```{r}
+## run CellChat
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- cellchat_wraper(sobj_sub, group_ident = "cell_line", assay = "RNA", slot = "data")
+    }
+}
+#saveRDS(res_list, "./../local/cellchat_res_list_cell_line.rds")
+res_list <- readRDS("./../local/cellchat_res_list_cell_line.rds")
+
+## add pool id
+res_list <- lapply(setNames(names(res_list),names(res_list)), function(n){
+    r <- res_list[[n]] %>% mutate(pool_id = n)
+})
+
+## combine results together
+res <- do.call(rbind, res_list)
+
+## add cancer type info to cell line
+cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+cancer_type_mapping <- cancer_type_mapping %>% mutate(source = Cell_line, target = Cell_line, source_cancer_type = Cancer_type, target_cancer_type = Cancer_type) %>% select(!c("Cell_line", "Cancer_type"))
+cancer_type_list <- unique(cancer_type_mapping$source_cancer_type)
+res <- res %>% left_join(y = cancer_type_mapping %>% select(source, source_cancer_type), by = c("source")) %>% left_join(y = cancer_type_mapping %>% select(target, target_cancer_type), by = c("target"))
+
+## add signaling type 
+res$signaling_type <- "non_self"
+res$signaling_type[res$source_cancer_type == res$target_cancer_type] <- "self"
+
+## add clear identifier 
+res$ID <- paste0(res$source_cancer_type,"_", res$target_cancer_type,"_", res$interaction_name_2)
+#maybe with cell lines instead of cancer type?!?
+#res$ID <- paste0(res$source,"_", res$target,"_", res$interaction_name_2) -> gives no significant results
+
+## list of all cancer types present in results
+cancer_types_list <- unique(c(res$source_cancer_type, res$target_cancer_type))
+
+## filter out duplicate entries (keep most significant one)
+res <- res %>% arrange(pval, desc(prob)) %>% distinct(interaction_name_2, source_cancer_type, target_cancer_type, pool_id, .keep_all = TRUE)
+
+
+## pvalie distribution for cellchat results, (very left heavy, some values already filtered out beforehand?)
+ggplot(res, aes(x = pval)) + geom_histogram()
+
+## Pie chart
+DF <- res %>% filter(p.adj < 0.05) %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+```
+
+
+
+```{r}
+aggregate_ranks <- function(ranked_list){
+    # aggregate ranks
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    rownames(agg_ranks) <- NULL
+    # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+    # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+    # Then correct for multiple testing for each performed test (ID)
+    agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+    agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+    agg_ranks <- agg_ranks %>% rename(ID = Name)
+    return(agg_ranks)
+}
+
+## make rank aggregation between the different pools
+
+## create ranked list for each pool (based on the identifiers (ID)).  
+pools <- unique(res$pool_id)
+ranked_list <- lapply(setNames(pools, pools), function(pool){
+    # arrange by pval and prob (probability)
+    re <- res %>% filter(pool_id == pool) %>% arrange(pval, desc(prob));
+    # get ranked list of identifiers
+    ranked_list <- re$ID;
+    ranked_list
+})
+
+## rank aggregation
+agg_res <- aggregate_ranks(ranked_list)
+
+## add rank aggregation results to results
+res <- res %>% left_join(y = agg_res, by = "ID")
+
+## the p value distribution looks OK ish ... similar distribution with simulated distribution (without the peak at 0-0.05)
+ggplot(res, aes(x = Score)) +  geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,1))
+ggplot(res, aes(x = Score)) +  geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,0.95))
+
+## only look at self signaling
+res <- res[res$signaling_type == "self",]
+
+## How many communications in what cancers?
+overview_df <- res %>% filter(Score.adj < 0.05) %>% group_by(source_cancer_type) %>% summarise(n=n()) %>% rename(cancer_type = source_cancer_type)
+overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+
+DT::datatable(overview_df)
+DT::datatable(res %>% filter(Score.adj < 0.05))
+res_filtered <- res %>% filter(Score.adj < 0.05)
+```
+
+
+```{r}
+## test how pvalue distribution looks for RRA with randomized ranked list
+
+a <- lapply(setNames(as.character(1:10), as.character(1:10)),function(x){as.character(sample(1:10000, replace = TRUE))})
+b <- aggregate_ranks(a)
+ggplot(b, aes(x = Score)) + geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,1))
+ggplot(b, aes(x = Score)) + geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,0.95))
+```
+```{r}
+
+
+DefaultAssay(sobj) <- "RNA"
+# VlnPlot(sobj, features = "nCount_RNA", pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
+# VlnPlot(sobj, features = "nFeature_RNA", pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
+# VlnPlot(sobj, features = "mito_percent", pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
+
+
+
+
+features <- c("CD99")
+DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_integrated")
+Nebulosa::plot_density(sobj, features = features, reduction = "umap_integrated")
+
+VlnPlot(sobj, features = features, group.by = "Cancer_type", pt.size = 0)
+
+```
+```{r}
+### create heatmap
+
+## only top 5 results for each cluster
+DF <- res %>% select(!c(source, target)) %>% filter(Score.adj < 0.05) %>% arrange(Score.adj, desc(prob)) %>% distinct(interaction_name_2,source_cancer_type, target_cancer_type  , .keep_all = TRUE) %>% group_by(source_cancer_type, target_cancer_type) %>% slice_min(Score.adj, n = 5)
+
+
+ggplot(DF, aes(x =interaction_name_2 , y = source_cancer_type, fill = prob)) +
+    geom_tile()  +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" ) + 
+    theme_bw() + labs(title = "Top 5 results for each cancer type") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+END
+
+## try to subcluster for single cancer type before communication inference
+
+```{r}
+
+
+sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
+pools <- unique(sobj_sub@meta.data$pool_id)
+pool <- pools[1]
+sobj_sub <- subset(sobj_sub, subset = pool_id == pool)
+
+recluster <- function(object, resolution = 0.8){
+    object <- object %>% NormalizeData() %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(dims = 1:100)
+    npcs <- ceiling(maxLikGlobalDimEst(object@reductions[[paste0("pca")]]@cell.embeddings, k = 20)[["dim.est"]])
+    object <- object %>% FindNeighbors(reductions = "pca",dims = 1:npcs) %>% FindClusters(resolution = resolution) %>% RunUMAP(dims = 1:npcs) 
+    return(object)
+}
+
+a <- recluster(sobj_sub, resolution = 0.8)
+get_silhouette_score(a)
+DimPlot(a, group.by = "seurat_clusters")
+
+
+################################################################################
+## calculate silhouette score
+get_silhouette_score <- function(object, npcs = 30){
+distance_matrix <- dist(x = Embeddings( object[["pca"]])[,1:npcs])
+  clusters <- object@meta.data$seurat_clusters
+  silh <- silhouette(as.numeric(clusters), dist = distance_matrix)
+  object@meta.data$silhouette_score <- silh[,3]
+  mean_silhouette_score <- mean(object@meta.data$silhouette_score)
+  
+  DF <- object@meta.data %>%
+    mutate(barcode = rownames(.)) %>%
+    arrange(seurat_clusters,-silhouette_score) %>%
+    mutate(barcode = factor(barcode, levels = barcode))
+    
+    ggplot(DF) +
+    geom_col(aes(barcode, silhouette_score, fill = seurat_clusters), show.legend = FALSE) +
+    geom_hline(yintercept = mean_silhouette_score, color = 'red', linetype = 'dashed') +
+    scale_x_discrete(name = 'Cells') +
+    scale_y_continuous(name = 'Silhouette score') +
+    scale_fill_manual(values = kelly()[3:length(kelly())]) +
+    theme_bw() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
+    )
+ p
+ return(mean_silhouette_score)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## CellChat only by cell_line
+
+```{r}
+cellchat_wraper <- function(object, group_ident = "cell_line", assay = "RNA", slot = "data"){
+    Idents(object) <- group_ident
+   
+    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
+    meta <- data.frame(group = labels, row.names = names(labels))
+    
+    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    CellChatDB <- CellChatDB.human
+    cc@DB <- CellChatDB
+    
+    cc <- subsetData(cc)
+    
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+    
+    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+    cc <- filterCommunication(cc, min.cells = 1)
+    df <- subsetCommunication(cc, thresh = 1)
+    df$p.adj <- p.adjust(df$pval, "BH")
+    
+    return(df)
+}
+
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- cellchat_wraper(sobj_sub, group_ident = "cell_line", assay = "RNA", slot = "data")
+    }
+}
+
+#saveRDS(res_list, "./../local/cellchat_res_list_cell_line.rds")
+res_list <- readRDS("./../local/cellchat_res_list_cell_line.rds")
+
+## (filter cells by p-value) and add cancer type annotation, annotate self to self (based on cancer type) communication
+
+res_list_2 <- list()
+for (n in names(res_list)){
+    r <- res_list[[n]]
+    
+    ## add cancer type information to cell line
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$source)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$source)
+    r$source_cancer_type <- df_mapped$Cancer_type
+    # for target
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$target)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$target)
+    r$target_cancer_type <- df_mapped$Cancer_type
+    #r <- r[r$p.adj < 0.05,]
+    r$signaling_type <- "paracrine"
+    r$signaling_type[r$source_cancer_type == r$target_cancer_type] <- "autocrine"
+    res_list_2[[n]] <- r
+}
+
+## filter out duplicate entries (keep most significant one)
+res_list_2_nodup <- lapply(setNames(names(res_list_2),names(res_list_2)), function(n){
+    r <- res_list_2[[n]];
+    r <- r %>% arrange(pval, desc(prob)) %>%distinct(interaction_name_2, source_cancer_type, target_cancer_type, .keep_all = TRUE) %>% mutate(pool_id = n);
+    r
+})
+
+## list all cancer types that appar in the results
+res <- do.call(rbind, res_list_2_nodup)
+res$pool_id <- factor(res$pool_id, levels = unique(res$pool_id))
+
+```
+
+```{r}
+
+
+DF <- res %>% select(!c(source, target)) %>% filter(p.adj < 0.05) %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+
+```
+
+
+```{r}
+
+
+res <- res[res$signaling_type == "autocrine",]
+
+## combine signaling from different pools based on robust rank aggregation
+# add clear identifier
+res$ID <- paste0(res$source_cancer_type,"_", res$target_cancer_type,"_", res$interaction_name_2)
+
+cancer_types_list <- unique(c(res$source_cancer_type, res$target_cancer_type))
+# make rank aggregation for each cancer type between the 
+agg_ranks_all <- NULL
+for(c in cancer_types_list){
+    print(c)
+    r <- res[res$source_cancer_type == c,] %>% arrange(p.adj, desc(prob))
+    ## create ranked lists based on pool ids
+    ranked_list <- lapply(setNames(unique(r$pool_id), unique(r$pool_id)), function(pid){
+        r_rank <- r[r$pool_id == pid,]$ID;
+        r_rank
+    })
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    agg_ranks$p.adj <-   agg_ranks$Score * length(ranked_list)
+    agg_ranks$p.adj <-   p.adjust(agg_ranks$p.adj, "BH")
+    agg_ranks_all <- rbind(agg_ranks_all , agg_ranks)
+}
+rownames(agg_ranks_all) <- NULL
+agg_ranks_all <- agg_ranks_all %>% mutate(ID = Name) %>% select(!Name)
+res <- res %>% select(!c(pval,p.adj, source, target))
+
+
+res <- merge(res, agg_ranks_all, by = "ID", all = TRUE)
+res <- res %>% filter(p.adj < 0.05)
+
+## collect the pool ids together into one column
+res <- res %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj) %>% mutate(pool_id = paste0(pool_id, collapse = ",")) %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj,pool_id) %>% summarise(prob = max(prob))
+
+
+## How many communications in what cancers?
+overview_df <- res %>% group_by(source_cancer_type) %>% summarise(n=n()) %>% rename(cancer_type = source_cancer_type)
+overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+
+DT::datatable(overview_df)
+```
+
+
+
+```{r}
+## create heatmap
+
+DF <- res
+
+ggplot(DF, aes(x = "", y = interaction_name_2, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~source_cancer_type, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = interaction_name_2, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = receptor, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+```
+
+
+
+
+
+
+
+
+## CellChat only by Cancer_type
+
+```{r}
+cellchat_wraper <- function(object, group_ident = "cell_line", assay = "RNA", slot = "data"){
+    Idents(object) <- group_ident
+   
+    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
+    meta <- data.frame(group = labels, row.names = names(labels))
+    
+    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
+    CellChatDB <- CellChatDB.human
+    cc@DB <- CellChatDB
+    
+    cc <- subsetData(cc)
+    
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+    
+    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
+    cc <- filterCommunication(cc, min.cells = 1)
+    df <- subsetCommunication(cc, thresh = 1)
+    df$p.adj <- p.adjust(df$pval, "BH")
+    
+    return(df)
+}
+
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- cellchat_wraper(sobj_sub, group_ident = "Cancer_type", assay = "RNA", slot = "data")
+    }
+}
+
+#saveRDS(res_list, "./../local/cellchat_res_list_Cancer_type.rds")
+res_list <- readRDS("./../local/cellchat_res_list_Cancer_type.rds")
+
+## (filter cells by p-value) and add cancer type annotation, annotate self to self (based on cancer type) communication
+
+res_list_2 <- list()
+for (n in names(res_list)){
+    r <- res_list[[n]]
+    
+    ## add cancer type information to cell line
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$source)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$source)
+    r$source_cancer_type <- df_mapped$Cancer_type
+    # for target
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$target)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$target)
+    r$target_cancer_type <- df_mapped$Cancer_type
+    #r <- r[r$p.adj < 0.05,]
+    r$signaling_type <- "paracrine"
+    r$signaling_type[r$source == r$target] <- "autocrine"
+    res_list_2[[n]] <- r
+}
+
+## filter out duplicate entries (keep most significant one)
+res_list_2_nodup <- lapply(setNames(names(res_list_2),names(res_list_2)), function(n){
+    r <- res_list_2[[n]];
+    r <- r %>% arrange(pval, desc(prob)) %>%distinct(interaction_name_2, source, target, .keep_all = TRUE) %>% mutate(pool_id = n);
+    r
+})
+
+## list all cancer types that appar in the results
+res <- do.call(rbind, res_list_2_nodup)
+res$pool_id <- factor(res$pool_id, levels = unique(res$pool_id))
+
+```
+
+```{r}
+
+
+DF <- res %>% filter(p.adj < 0.05) %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+
+```
+
+
+```{r}
+
+
+#res <- res[res$signaling_type == "autocrine",]
+
+## combine signaling from different pools based on robust rank aggregation
+# add clear identifier
+res$ID <- paste0(res$source,"_", res$target,"_", res$interaction_name_2)
+
+cancer_types_list <- unique(c(res$source, res$target))
+# make rank aggregation for each cancer type between the 
+agg_ranks_all <- NULL
+for(c in cancer_types_list){
+    print(c)
+    r <- res[res$source == c,] %>% arrange(p.adj, desc(prob))
+    ## create ranked lists based on pool ids
+    ranked_list <- lapply(setNames(unique(r$pool_id), unique(r$pool_id)), function(pid){
+        r_rank <- r[r$pool_id == pid,]$ID;
+        r_rank
+    })
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    agg_ranks$p.adj <-   agg_ranks$Score * length(ranked_list)
+    agg_ranks$p.adj <-   p.adjust(agg_ranks$p.adj, "BH")
+    agg_ranks_all <- rbind(agg_ranks_all , agg_ranks)
+}
+rownames(agg_ranks_all) <- NULL
+agg_ranks_all <- agg_ranks_all %>% mutate(ID = Name) %>% select(!Name)
+res <- res %>% select(!c(pval,p.adj, source_cancer_type, target_cancer_type))
+
+res <- merge(res, agg_ranks_all, by = "ID", all = TRUE)
+res <- res %>% filter(p.adj < 0.05)
+
+## collect the pool ids together into one column
+res <- res %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source, target, signaling_type, Score, p.adj) %>% mutate(pool_id = paste0(pool_id, collapse = ",")) %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source, target, signaling_type, Score, p.adj,pool_id) %>% summarise(prob = max(prob))
+
+res <- res[res$signaling_type == "autocrine",]
+## How many communications in what cancers?
+overview_df <- res %>% group_by(source) %>% summarise(n=n()) %>% rename(cancer_type = source)
+if(length(cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)]) > 0 ) {
+    overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+}
+DT::datatable(overview_df)
+```
+
+
+
+```{r}
+## create heatmap
+
+DF <- res
+
+ggplot(DF, aes(x = "", y = interaction_name_2, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~source_cancer_type, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = interaction_name_2, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = receptor, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+```
+
+## Run with Liana cellchat
+
+
+
+```{r}
+## LIANA
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("call_cellchat")
+    #<- c("connectome", "logfc", "natmi", "sca", "cytotalk", "call_cellchat", "call_italk")
+    # "cellphonedb" to computational expensive
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    #TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    #liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+    liana_results_single_score <- liana_results
+    liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$pval, "BH")
+    #liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+
+    res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+
+    res_df <- res_df[order(res_df$p.adj),]
+
+    return(list(results = res_df))
+}
+
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- callLIANA(sobj_sub, anno_level = "cell_line", assay = "RNA")
+    }
+}
+
+#saveRDS(res_list, "./../local/LIANAcellchat_res_list_cell_line.rds")
+res_list <- readRDS("./../local/LIANAcellchat_res_list_cell_line.rds")
+
+## (filter cells by p-value) and add cancer type annotation, annotate self to self (based on cancer type) communication
+
+res_list_2 <- list()
+for (n in names(res_list)){
+    r <- res_list[[n]]$results
+    
+    ## add cancer type information to cell line
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$source)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$source)
+    r$source_cancer_type <- df_mapped$Cancer_type
+    # for target
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$target)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$target)
+    r$target_cancer_type <- df_mapped$Cancer_type
+    #r <- r[r$p.adj < 0.05,]
+    r$signaling_type <- "paracrine"
+    r$signaling_type[r$source_cancer_type == r$target_cancer_type] <- "autocrine"
+    res_list_2[[n]] <- r
+}
+
+## filter out duplicate entries (keep most significant one)
+res_list_2_nodup <- lapply(setNames(names(res_list_2),names(res_list_2)), function(n){
+    r <- res_list_2[[n]];
+    r <- r %>% arrange(p.adj, desc(prob)) %>%distinct(ligand,receptor, source_cancer_type, target_cancer_type, .keep_all = TRUE) %>% mutate(pool_id = n);
+    r
+})
+
+## list all cancer types that appar in the results
+res <- do.call(rbind, res_list_2_nodup)
+res$pool_id <- factor(res$pool_id, levels = unique(res$pool_id))
+
+```
+
+```{r}
+
+
+DF <- res %>% filter(p.adj < 0.05) %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+
+```
+
+
+```{r}
+
+
+res <- res[res$signaling_type == "autocrine",]
+
+## combine signaling from different pools based on robust rank aggregation
+# add clear identifier
+res$ID <- paste0(res$source_cancer_type,"_", res$target_cancer_type,"_", res$source, "_", res$ligand)
+
+cancer_types_list <- unique(c(res$source_cancer_type, res$target_cancer_type))
+# make rank aggregation for each cancer type between the 
+agg_ranks_all <- NULL
+for(c in cancer_types_list){
+    print(c)
+    r <- res[res$source_cancer_type == c,] %>% arrange(p.adj, desc(prob))
+    ## create ranked lists based on pool ids
+    ranked_list <- lapply(setNames(unique(r$pool_id), unique(r$pool_id)), function(pid){
+        r_rank <- r[r$pool_id == pid,]$ID;
+        r_rank
+    })
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    agg_ranks$p.adj <-   p.adjust(agg_ranks$Score, "BH")
+    agg_ranks_all <- rbind(agg_ranks_all , agg_ranks)
+}
+rownames(agg_ranks_all) <- NULL
+agg_ranks_all <- agg_ranks_all %>% mutate(ID = Name) %>% select(!Name)
+res <- res %>% select(!c(pval,p.adj, source, target))
+
+
+res <- merge(res, agg_ranks_all, by = "ID", all = TRUE)
+res <- res %>% filter(p.adj < 0.05)
+
+## collect the pool ids together into one column
+res <- res %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj) %>% mutate(pool_id = paste0(pool_id, collapse = ",")) %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj,pool_id) %>% summarise(prob = max(prob))
+
+
+## How many communications in what cancers?
+overview_df <- res %>% group_by(source_cancer_type) %>% summarise(n=n()) %>% rename(cancer_type = source_cancer_type)
+overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+
+DT::datatable(overview_df)
+```
+
+
+
+```{r}
+## create heatmap
+
+DF <- res
+
+ggplot(DF, aes(x = "", y = interaction_name_2, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~source_cancer_type, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = interaction_name_2, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = receptor, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+```
+
+
+
+## Try with more tools
+
+
+
+
+```{r}
+## LIANA
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("connectome", "logfc", "natmi", "sca", "cytotalk", "call_cellchat", "call_italk")
+    # "cellphonedb" to computational expensive
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+    #liana_results_single_score <- liana_results
+    #liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$pval, "BH")
+    liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+
+    res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+
+    res_df <- res_df[order(res_df$p.adj),]
+
+    return(list(results = res_df))
+}
+
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- callLIANA(sobj_sub, anno_level = "cell_line", assay = "RNA")
+    }
+}
+
+#saveRDS(res_list, "./../local/LIANA_res_list_cell_line.rds")
+res_list <- readRDS("./../local/LIANA_res_list_cell_line.rds")
+
+## (filter cells by p-value) and add cancer type annotation, annotate self to self (based on cancer type) communication
+
+res_list_2 <- list()
+for (n in names(res_list)){
+    r <- res_list[[n]]$results
+    
+    ## add cancer type information to cell line
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$source)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$source)
+    r$source_cancer_type <- df_mapped$Cancer_type
+    # for target
+    cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+    df_mapped <- data.frame(Cell_line = r$target)
+    df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped)))%>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
+    # doublecheck if still in the correct order?
+    table(df_mapped$Cell_line == r$target)
+    r$target_cancer_type <- df_mapped$Cancer_type
+    #r <- r[r$p.adj < 0.05,]
+    r$signaling_type <- "paracrine"
+    r$signaling_type[r$source_cancer_type == r$target_cancer_type] <- "autocrine"
+    res_list_2[[n]] <- r
+}
+
+## filter out duplicate entries (keep most significant one)
+res_list_2_nodup <- lapply(setNames(names(res_list_2),names(res_list_2)), function(n){
+    r <- res_list_2[[n]];
+    r <- r %>% select(source, target, ligand, receptor, aggregate_rank, mean_rank, p.adj, id, comparison, source_cancer_type, target_cancer_type, signaling_type)
+    r <- r %>% arrange(p.adj, desc(mean_rank)) %>%distinct(ligand,receptor, source_cancer_type, target_cancer_type, .keep_all = TRUE) %>% mutate(pool_id = n);
+    r
+})
+
+## list all cancer types that appar in the results
+res <- do.call(rbind, res_list_2_nodup)
+res$pool_id <- factor(res$pool_id, levels = unique(res$pool_id))
+
+```
+
+```{r}
+
+
+DF <- res %>% filter(p.adj < 0.05) %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+
+```
+
+
+```{r}
+
+
+res <- res[res$signaling_type == "autocrine",]
+
+## combine signaling from different pools based on robust rank aggregation
+# add clear identifier
+res$ID <- paste0(res$source_cancer_type,"_", res$target_cancer_type,"_", res$source, "_", res$ligand)
+
+cancer_types_list <- unique(c(res$source_cancer_type, res$target_cancer_type))
+# make rank aggregation for each cancer type between the 
+agg_ranks_all <- NULL
+for(c in cancer_types_list){
+    print(c)
+    r <- res[res$source_cancer_type == c,] %>% arrange(p.adj, desc(mean_rank))
+    ## create ranked lists based on pool ids
+    ranked_list <- lapply(setNames(unique(r$pool_id), unique(r$pool_id)), function(pid){
+        r_rank <- r[r$pool_id == pid,]$ID;
+        r_rank
+    })
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    agg_ranks$p.adj <-   p.adjust(agg_ranks$Score, "BH")
+    agg_ranks_all <- rbind(agg_ranks_all , agg_ranks)
+}
+rownames(agg_ranks_all) <- NULL
+agg_ranks_all <- agg_ranks_all %>% mutate(ID = Name) %>% select(!Name)
+res <- res %>% select(!c(aggregate_rank,p.adj, source, target))
+
+
+res <- merge(res, agg_ranks_all, by = "ID", all = TRUE)
+res <- res %>% filter(p.adj < 0.05)
+
+## collect the pool ids together into one column
+res <- res %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj) %>% mutate(pool_id = paste0(pool_id, collapse = ",")) %>% group_by(ID, ligand, receptor, interaction_name, interaction_name_2, pathway_name, annotation, evidence, source_cancer_type, target_cancer_type, signaling_type, Score, p.adj,pool_id) %>% summarise(prob = max(prob))
+
+
+## How many communications in what cancers?
+overview_df <- res %>% group_by(source_cancer_type) %>% summarise(n=n()) %>% rename(cancer_type = source_cancer_type)
+overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+
+DT::datatable(overview_df)
+```
+
+
+
+```{r}
+## create heatmap
+
+DF <- res
+
+ggplot(DF, aes(x = "", y = interaction_name_2, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~source_cancer_type, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = interaction_name_2, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+
+ggplot(DF, aes(x = receptor, y = source_cancer_type, fill = prob)) +
+    geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" )
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Run based on pools and cell_line
+
+sub-select pools, then calculate communication between cancer types present. In the end select only the self communications.
+
+```{r}
+## LIANA
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("call_cellchat")
+    #<- c("connectome", "logfc", "natmi", "sca", "cytotalk", "call_cellchat", "call_italk")
+    # "cellphonedb" to computational expensive
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+
+    liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+
+    res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+
+    res_df <- res_df[order(res_df$p.adj),]
+
+    return(list(results = res_df, raw_results = liana_results))
+}
+
+################################################################################
+
+#options(error = browser())
+#pools <- unique(sobj@meta.data$pool_id)
+#pools <- pools[!(pools %in% c("18", "custom"))]
+pools <- c("22", "15", "19", "16", "10", "9", "6")
+# "18", "custom"
+for( i in pools){
+    print(i)
+    sobj_sub <- subset(sobj, subset = pool_id == i)
+    res <- callLIANA(sobj_sub, anno_level = "cell_line")
+    saveRDS(res,paste0("./../local/communication_pool_", i,".rds"))
+    
+}
+
+
+pool <- readRDS("./../local/communication_pool_18.rds")
+res <- pool[["results"]]
+
+res$p.adj <- p.adjust(res$aggregate_rank, "BH")
+
+a <- res[res$source == res$target,] %>% filter(p.adj < 0.05)
+
+#sobj_sub@meta.data$Cancer_type <- droplevels(sobj_sub@meta.data$Cancer_type)
+
+#which(!is.na(sobj_sub@meta.data$Cancer_type))
+# 
+# table(sobj_sub@meta.data$Cancer_type)
+# 
+# liana_res <- callLIANA(sobj_sub, anno_level = "Cancer_type")
+# 
+# object <- sobj_sub
+# anno_level <- "Cancer_type"
+# assay <- "RNA"
+# 
+# DefaultAssay(object) <- assay
+#     object <- SetIdent(object, value = anno_level)
+# 
+#     used_tools <- c("connectome")#, "logfc", "natmi", "sca", "cellphonedb", "cytotalk","call_cellchat", "call_italk")
+# 
+#     liana_results <- liana_wrap(object, method = used_tools)
+#     ## remove emppty results (can happen if not enough cells in each cluster)
+#     TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+#     liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+# 
+#     liana_results_single_score$p.adj <- p.adjust(liana_results_single_score$aggregate_rank, "BH")
+# 
+#     res_df <- liana_results_single_score %>% mutate(id = paste0(ligand, " -> ", receptor), comparison = paste0(source, "_vs_", target))
+# 
+#     res_df <- res_df[order(res_df$p.adj),]
+# 
+# 
+# sce <- object
+############################
+
+```
+
+```{r}
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("call_cellchat")
+    #<- c("connectome", "logfc", "natmi", "sca", "cytotalk", "call_cellchat", "call_italk")
+    # "cellphonedb" to computational expensive
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    #TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    #liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+
+    return(list(liana_results))
+}
+
+sobj_sub <- subset(sobj, subset = pool_id == "18")
+
+res_1 <- cellchat_wraper(sobj_sub, group_ident = "cell_line", assay = "RNA", slot = "data")
+res_2 <- callLIANA(sobj_sub, anno_level = "cell_line")
+
+
+
+
+
+
+
+
+
+omnipath_show_db()
+
+interactions <- import_omnipath_interactions(
+    resources =   list(
+            'Baccin2019',
+            'CellCall',
+            'CellChatDB',
+            'Cellinker',
+            'CellPhoneDB',
+            'CellTalkDB',
+            'connectomeDB2020',
+            'EMBRACE',
+            'Guide2Pharma',
+            'HPMR',
+            'ICELLNET',
+            'iTALK',
+            'Kirouac2010',
+            'LRdb',
+            'Ramilowski2015'
+        )
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## run with best cell-cell inference tools
+
+```{r}
+## best tools based on https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02783-y: c("CellChat","CellPhoneDB", "NicheNet", "ICELLNET")
+
+callLIANA <- function(object, anno_level = "scMRMA_level_3", assay = "RNA"){
+    DefaultAssay(object) <- assay
+    object <- SetIdent(object, value = anno_level)
+
+    used_tools <- c("call_cellchat","cellphonedb")
+    #<- c("connectome", "logfc", "natmi", "sca", "cytotalk", "call_cellchat", "call_italk")
+    # "cellphonedb" to computational expensive
+    #browser()
+    liana_results <- liana_wrap(object, method = used_tools)
+    ## remove emppty results (can happen if not enough cells in each cluster)
+    TF <-  sapply(liana_results, function(x){all(c("source", "target") %in% names(x))})
+    liana_results_single_score <- liana_results[TF] %>% liana_aggregate()
+
+    return(list(results = liana_results_single_score, raw = liana_results))
+}
+
+
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- callLIANA(sobj_sub, anno_level = "cell_line", assay = "RNA")
+    }
+}
+
+saveRDS(res_list, "./../local/LIANA_best_tools_res_list_cell_line.rds")
+res_list <- readRDS("./../local/LIANA_best_tools_res_list_cell_line.rds")
+
+```
+
+
+
+## clean code
+
+Because we do not have different cell types, the communication is run between the different cell lines inside each pool.
+
+```{r}
+## run CellChat
+if(FALSE){
+    pools <- c("18", "22", "15", "19", "16", "10", "9", "6", "custom")
+    res_list <- list()
+    for( i in pools){
+        print(i)
+        sobj_sub <- subset(sobj, subset = pool_id == i)
+        res_list[[i]] <- cellchat_wraper(sobj_sub, group_ident = "cell_line", assay = "RNA", slot = "data")
+    }
+}
+#saveRDS(res_list, "./../local/cellchat_res_list_cell_line.rds")
+res_list <- readRDS("./../local/cellchat_res_list_cell_line.rds")
+
+## add pool id
+res_list <- lapply(setNames(names(res_list),names(res_list)), function(n){
+    r <- res_list[[n]] %>% mutate(pool_id = n)
+})
+
+## combine results together
+res <- do.call(rbind, res_list)
+
+## add cancer type info to cell line
+cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+cancer_type_mapping <- cancer_type_mapping %>% mutate(source = Cell_line, target = Cell_line, source_cancer_type = Cancer_type, target_cancer_type = Cancer_type) %>% select(!c("Cell_line", "Cancer_type"))
+cancer_type_list <- unique(cancer_type_mapping$source_cancer_type)
+res <- res %>% left_join(y = cancer_type_mapping %>% select(source, source_cancer_type), by = c("source")) %>% left_join(y = cancer_type_mapping %>% select(target, target_cancer_type), by = c("target"))
+
+## add signaling type 
+res$signaling_type <- "non_self"
+res$signaling_type[res$source_cancer_type == res$target_cancer_type] <- "self"
+
+## add clear identifier 
+res$ID <- paste0(res$source_cancer_type,"_", res$target_cancer_type,"_", res$interaction_name_2)
+#maybe with cell lines instead of cancer type?!?
+#res$ID <- paste0(res$source,"_", res$target,"_", res$interaction_name_2) -> gives no significant results
+
+## list of all cancer types present in results
+cancer_types_list <- unique(c(res$source_cancer_type, res$target_cancer_type))
+
+## filter out duplicate entries (keep most significant one)
+res <- res %>% arrange(pval, desc(prob)) %>% distinct(interaction_name_2, source_cancer_type, target_cancer_type, pool_id, .keep_all = TRUE)
+
+
+## pvalie distribution for cellchat results, (very left heavy, some values already filtered out beforehand?)
+ggplot(res, aes(x = pval)) + geom_histogram()
+
+## Pie chart
+DF <- res %>% group_by(pool_id, signaling_type) %>% summarise(nbr_communications = n())
+# filter(p.adj < 0.05)
+## only a small portion of the inferred signaling is autocrine!
+PieDonut(DF, aes(pool_id, signaling_type, count = nbr_communications))
+
+```
+
+
+
+```{r}
+aggregate_ranks <- function(ranked_list){
+    # aggregate ranks
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    rownames(agg_ranks) <- NULL
+    # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+    # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+    # Then correct for multiple testing for each performed test (ID)
+    agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+    agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+    agg_ranks <- agg_ranks %>% rename(ID = Name)
+    return(agg_ranks)
+}
+
+## make rank aggregation between the different pools
+
+## create ranked list for each pool (based on the identifiers (ID)).  
+pools <- unique(res$pool_id)
+ranked_list <- lapply(setNames(pools, pools), function(pool){
+    # arrange by pval and prob (probability)
+    re <- res %>% filter(pool_id == pool) %>% arrange(pval, desc(prob));
+    # get ranked list of identifiers
+    ranked_list <- re$ID;
+    ranked_list
+})
+
+## rank aggregation
+agg_res <- aggregate_ranks(ranked_list)
+
+## add rank aggregation results to results
+res <- res %>% left_join(y = agg_res, by = "ID")
+
+## the p value distribution looks OK ish ... similar distribution with simulated distribution (without the peak at 0-0.05)
+ggplot(res, aes(x = Score)) +  geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,1))
+ggplot(res, aes(x = Score)) +  geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,0.95))
+
+## only look at self signaling
+res <- res[res$signaling_type == "self",]
+
+## How many communications in what cancers?
+overview_df <- res %>% select(!c(source, target)) %>% filter(Score.adj < 0.05) %>% arrange(Score.adj, desc(prob)) %>% distinct(interaction_name_2,source_cancer_type, target_cancer_type  , .keep_all = TRUE) %>% group_by(source_cancer_type) %>% summarise(n=n()) %>% rename(cancer_type = source_cancer_type)
+overview_df <- rbind(overview_df,data.frame(cancer_type = cancer_types_list[!(cancer_types_list %in% overview_df$cancer_type)], n = 0))
+
+DT::datatable(overview_df)
+DT::datatable(res %>% select(!c(source, target)) %>% filter(Score.adj < 0.05) %>% arrange(Score.adj, desc(prob)) %>% distinct(interaction_name_2,source_cancer_type, target_cancer_type  , .keep_all = TRUE))
+```
+
+
+```{r}
+## test how pvalue distribution looks for RRA with randomized ranked list
+
+a <- lapply(setNames(as.character(1:10), as.character(1:10)),function(x){as.character(sample(1:10000, replace = TRUE))})
+b <- aggregate_ranks(a)
+ggplot(b, aes(x = Score)) + geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,1))
+ggplot(b, aes(x = Score)) + geom_histogram(binwidth = 0.05, boundary = 0) + xlim(c(0,0.95))
+```
+
+```{r, fig.width = 12, fig.height = 8}
+### create heatmap
+
+## only top 5 results for each cluster
+DF <- res %>% select(!c(source, target))  %>% arrange(Score.adj, desc(prob), Score) %>% distinct(interaction_name_2,source_cancer_type, target_cancer_type  , .keep_all = TRUE) %>% group_by(source_cancer_type, target_cancer_type) %>% slice_min(Score.adj, n = 5) %>% slice_min(Score, n = 5) %>% slice_max(prob, n = 5)
+#filter(Score.adj < 0.05)
+
+p <- ggplot(DF, aes(x =interaction_name_2 , y = source_cancer_type, fill = prob)) +
+    geom_tile()  +
+    facet_grid(.~annotation, drop = TRUE, scales = "free", space = "free" ) + 
+    theme_bw() + labs(title = "Top 5 results for each cancer type") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+p
+
+ggsave(plot = p , filename = "heatmap.svg", device = "svg", height = 10, width = 30)
+
+```
+
+
+
+
+```{r}
+aggregate_ranks <- function(ranked_list){
+    # aggregate ranks
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    rownames(agg_ranks) <- NULL
+    # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+    # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+    # Then correct for multiple testing for each performed test (ID)
+    agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+    agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+    agg_ranks <- agg_ranks %>% rename(ID = Name)
+    return(agg_ranks)
+}
+
+#Prostate Cancer
+#sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
+# pools <- unique(sobj_sub@meta.data$pool_id)
+# #pool <- pools[2]
+# sobj_sub <- subset(sobj, subset = pool_id == "22")
+# DefaultAssay(sobj_sub) <- "RNA"
+object <- sobj
+DefaultAssay(object) <- "RNA"
+
+
+CellChatDB <- CellChatDB.human
+## create genes used for assay (all genes in interaction DB)
+#a <- CellChatDB[["interaction"]]
+interaction_list <- lapply(setNames(CellChatDB[["interaction"]]$interaction_name, CellChatDB[["interaction"]]$interaction_name), function(x){
+  as.character(c(unlist(strsplit(x, split = "_"))))})
+
+## create list that contains only interaction for which at least one gene is found active in one cell (otherwise leads to error in AddModuleScore)
+in_data <- unlist(lapply(setNames(names(interaction_list), names(interaction_list)), function(x){
+    in_list <- interaction_list[[x]];
+    TF <- in_list %in% rownames(object);
+    if(any(TF)){r <- x}else{r <- FALSE}
+}))
+
+interaction_list <- interaction_list[(names(interaction_list) %in% in_data)]
+
+
+features <- interaction_list
+feature_names <- names(features)
+## dont use interaction names (to long,will get truncated)
+communication_assay <- AddModuleScore(object, features = features , assay = "RNA", slot = "data", seed = 1, name = paste0("interactionx_"), ctrl = 100)
+cop <- communication_assay
+communication_assay <- communication_assay@meta.data
+communication_assay <-communication_assay[,grepl(pattern = "interactionx_", colnames(communication_assay))]
+## add back the initial interaction name
+colnames(communication_assay) <- feature_names
+communication_assay <- t(communication_assay)
+cc_assay <- CreateAssayObject(data = as.matrix(communication_assay), name = "interaction_assay" )
+object[["interaction_assay"]] <- cc_assay
+#saveRDS(object = object, file = "./../local/module_score_object_full.rds")
+object <- readRDS("./../local/module_score_object_full.rds")
+object_sub <- subset(object, subset = Cancer_type == "Prostate Cancer")
+
+
+assay_data <- GetAssayData(object_sub, assay = "interaction_assay" , slot = "data")
+
+## create ranked list based on columns
+
+name_list <- rownames(assay_data)
+mranked <- apply(assay_data, MARGIN = 2, function(x){ s <- sort(x, decreasing = TRUE); 
+names(s)
+})
+
+
+ranked_list <- as.list(as.data.frame(mranked))
+
+
+## rank aggregation
+agg_res <- aggregate_ranks(ranked_list)
+
+a <- AverageExpression(object_sub, features = c("KLK3","NTRK1","NGFR","PRSS3","PARD3", "F2RL2", "F2R", "F2RL3", "F2RL1","COL6A2","ITGA3","ITGB1"), assay = "RNA")
+a
+
+
+features <- c("KLK3")
+DefaultAssay(object_sub) <- "RNA"
+#Nebulosa::plot_density(object_sub, features = features, reduction = "umap_RNA", slot = "data")
+FeaturePlot(object_sub, features = features, reduction = "umap_RNA", slot = "data")
+
+################################################################################ 
+# 
+# sobj_sub <- subset(sobj, subset = Cancer_type == "Lung Cancer")
+# pools <- unique(sobj_sub@meta.data$pool_id)
+# pool <- pools[1]
+# sobj_sub <- subset(sobj_sub, subset = pool_id == pool)
+# 
+# DefaultAssay(sobj_sub) <- "RNA"
+# 
+# recluster <- function(object, resolution = 0.8){
+#     object <- object %>% NormalizeData() %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(dims = 1:100)
+#     npcs <- ceiling(maxLikGlobalDimEst(object@reductions[[paste0("pca")]]@cell.embeddings, k = 20)[["dim.est"]])
+#     object <- object %>% FindNeighbors(reductions = "pca",dims = 1:npcs) %>% FindClusters(resolution = resolution) %>% RunUMAP(dims = 1:npcs)
+#     return(object)
+# }
+# 
+# a <- recluster(sobj_sub, resolution = 0.8)
+# get_silhouette_score(a)
+# DimPlot(a, group.by = "seurat_clusters")
+# DimPlot(a, group.by = "cell_line")
+# 
+# 
+# ################################################################################
+# ## calculate silhouette score
+# get_silhouette_score <- function(object, npcs = 30){
+# distance_matrix <- dist(x = Embeddings( object[["pca"]])[,1:npcs])
+#   clusters <- object@meta.data$seurat_clusters
+#   silh <- silhouette(as.numeric(clusters), dist = distance_matrix)
+#   object@meta.data$silhouette_score <- silh[,3]
+#   mean_silhouette_score <- mean(object@meta.data$silhouette_score)
+# 
+#   DF <- object@meta.data %>%
+#     mutate(barcode = rownames(.)) %>%
+#     arrange(seurat_clusters,-silhouette_score) %>%
+#     mutate(barcode = factor(barcode, levels = barcode))
+# 
+#     ggplot(DF) +
+#     geom_col(aes(barcode, silhouette_score, fill = seurat_clusters), show.legend = FALSE) +
+#     geom_hline(yintercept = mean_silhouette_score, color = 'red', linetype = 'dashed') +
+#     scale_x_discrete(name = 'Cells') +
+#     scale_y_continuous(name = 'Silhouette score') +
+#     scale_fill_manual(values = kelly()[3:length(kelly())]) +
+#     theme_bw() +
+#     theme(
+#       axis.title.x = element_blank(),
+#       axis.text.x = element_blank(),
+#       axis.ticks.x = element_blank(),
+#       panel.grid.major = element_blank(),
+#       panel.grid.minor = element_blank()
+#     )
+#  
+#  return(mean_silhouette_score)
+# }
+
+```
+
+
+```{r}
+## based on average gene expression
+
+aggregate_ranks <- function(ranked_list){
+    # aggregate ranks
+    agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
+    rownames(agg_ranks) <- NULL
+    # correct for multiple testing  doi:10.1093/bioinformatics/btr709. 
+    # The initial create scores ar minimal bounds for p-values, Bonferroni correct by multiplby scores * length(ranked_list) to get upper bound.
+    # Then correct for multiple testing for each performed test (ID)
+    agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
+    agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
+    agg_ranks <- agg_ranks %>% rename(ID = Name)
+    return(agg_ranks)
+}
+
+object <- sobj
+DefaultAssay(object) <- "RNA"
+
+
+CellChatDB <- CellChatDB.human
+## create genes used for assay (all genes in interaction DB)
+#a <- CellChatDB[["interaction"]]
+interaction_list <- lapply(setNames(CellChatDB[["interaction"]]$interaction_name, CellChatDB[["interaction"]]$interaction_name), function(x){
+  as.character(c(unlist(strsplit(x, split = "_"))))})
+
+## create list that contains only interaction for which at least one gene is found active in one cell (otherwise leads to error in AddModuleScore)
+in_data <- unlist(lapply(setNames(names(interaction_list), names(interaction_list)), function(x){
+    in_list <- interaction_list[[x]];
+    TF <- in_list %in% rownames(object);
+    if(any(TF)){r <- x}else{r <- FALSE}
+}))
+
+interaction_list <- interaction_list[(names(interaction_list) %in% in_data)]
+
+
+features <- interaction_list
+avg.list <- list()
+## dont use interaction names (to long,will get truncated)
+a <- lapply(setNames(features, names(features)), function(feature){  
+    communication_assay <- AverageExpression(object, features = unlist(feature) , assay = "RNA", slot = "data", group.by = "cell_line")
+    print(feature)
+    r <- communication_assay %>% as.data.frame() %>% as.matrix() %>% colMeans()
+    r
+    })
+
+communication_assay <- AverageExpression(object, features = unlist(features) , assay = "RNA", slot = "data", group.by = "cell_line")
+a <- communication_assay %>% as.data.frame() %>% as.matrix() %>% colMeans()
+
+```
+
+
+```{r}
+## calculate most expressed genes
+assay.data <- GetAssayData(object = object)
+avg.expr <- Matrix::rowMeans(assay.data[rownames(object),])
+avg.expr <- avg.expr[order(avg.expr)]
+```
+
+```{r}
+##Bioinformatic identification of potential autocrine signaling loops in cancers from gene expression profiles. (2001)(Microarray)
+# Try to infer autocrine signaling based on correlation
+
+sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
+ pools <- unique(sobj_sub@meta.data$pool_id)
+ pool <- pools[2]
+ sobj_sub <- subset(sobj, subset = pool_id == "22")
+ DefaultAssay(sobj_sub) <- "RNA"
+object <- sobj_sub
+DefaultAssay(object) <- "RNA"
+
+
+```
+
+
+
+
+```{r}
+##Natami with liana (try if it works with one cell type)
+
+
+sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
+ pools <- unique(sobj_sub@meta.data$pool_id)
+ pool <- pools[2]
+ sobj_sub <- subset(sobj, subset = pool_id == "22")
+ DefaultAssay(sobj_sub) <- "RNA"
+object <- sobj_sub
+DefaultAssay(object) <- "RNA"
+
+    used_tools <- c("natmi")
+    object <- SetIdent(object, value = "Caner_type")
+    liana_results <- liana_wrap(object, method = used_tools)
+```
+

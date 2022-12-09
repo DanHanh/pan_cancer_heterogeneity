@@ -56,7 +56,7 @@ cancer_type_mapping <- metadata %>% select("Cell_line", "Cancer_type") %>% uniqu
 
 ## manualy annotate some of the cell lines that are not present in metadata
 cell_type <- c("NCIH2196_LUNG", "SW1116_LARGE_INTESTINE", "BICR18_UPPER_AERODIGESTIVE_TRACT", "EFO27_OVARY", "SNU1076_UPPER_AERODIGESTIVE_TRACT", "SNU81_LARGE_INTESTINE", "OVKATE_OVARY", "SW1463_LARGE_INTESTINE", "SIMA_AUTONOMIC_GANGLIA")
-cancer_type <- c("Lung Cancer", "Colon/Colorectal Cancer", "Head and Neck Cancer", "Ovarian Cancer", "Head and Neck Cancer ", "Colon/Colorectal Cancer ", "Ovarian Cancer", "Colon/Colorectal Cancer ", "Neuroblastoma ")
+cancer_type <- c("Lung Cancer", "Colon/Colorectal Cancer", "Head and Neck Cancer", "Ovarian Cancer", "Head and Neck Cancer", "Colon/Colorectal Cancer", "Ovarian Cancer", "Colon/Colorectal Cancer", "Neuroblastoma")
 ann_df <- data.frame(Cell_line = cell_type, Cancer_type = cancer_type)
 cancer_type_mapping <- rbind(cancer_type_mapping, ann_df) %>% unique()
 
