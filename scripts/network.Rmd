@@ -1,0 +1,199 @@
+---
+title: "Network"
+author: "Daniel Hanhart"
+date: "12/21/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(igraph)
+library(circlize)
+library(ComplexHeatmap)
+library(matrixStats)
+
+cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
+```
+
+## load commmunication results
+
+
+```{r cars}
+## load infered communications
+res_list <- readRDS("./../local/signal_list_omni.rds") 
+res <- do.call(rbind, res_list) %>% remove_rownames(.) %>% dplyr::rename(
+  ligand = cluster.1.cluster.1.cluster.1,
+  receptor = cluster.1.cluster.1.cluster.1.1,
+  score = cluster.1.cluster.1.LRscore, type = cluster.1.cluster.1.interaction.type) %>% mutate(ID = paste0(ligand, "_", receptor))
+
+```
+
+## create network
+
+```{r}
+## us all vertices found in any grap to create
+
+ # net_df <- res %>% dplyr::rename(from = ligand, to = receptor, weight = score, cell_line = Cell_line, cancer_type = Cancer_type) %>% dplyr::select(from, to, weight, cell_line, cancer_type)# %>% group_by(from, to) %>% summarise(score = sum(score))
+# 
+# vertices_df <- data.frame(name = unique(c(net_df$from, net_df$to)))
+# 
+# 
+# grph_1 <- graph_from_data_frame(net_df, directed = TRUE, vertices = vertices_df)
+# grph_1
+# #plot(grph_1, vertex.shape = "none", vertex.size = 1 , arrow.size = 0.1, arrow.width = 1, arrow.mode = 0)
+# 
+# net_df <- res %>% filter( score > 0.5, Cell_line == "PC3_PROSTATE")%>% dplyr::rename(from = ligand, to = receptor, score = score, cell_line = Cell_line, cancer_type = Cancer_type) %>% dplyr::select(from, to, score, cell_line, cancer_type)# %>% group_by(from, to) %>% summarise(score = sum(score))
+# 
+# vertices_df <- data.frame(name = unique(c(net_df$from, net_df$to)))
+# 
+# 
+# grph_2 <- graph_from_data_frame(net_df, directed = TRUE, vertices = vertices_df)
+# grph_2
+# 
+# 
+# 
+# g_sim <- graph.intersection(grph_1,grph_1)
+# plot(g_sim, vertex.shape = "none", vertex.size = 1 , arrow.size = 0.1, arrow.width = 1, arrow.mode = 0)
+#################################################################################score > 0.5
+create_graph <- function(res, cell_line = "LNCAPCLONEFGC_PROSTATE"){
+  net_df <- res %>% filter(  Cell_line == cell_line)%>% dplyr::rename(from = ligand, to = receptor, weight = score, cell_line = Cell_line, cancer_type = Cancer_type) %>% dplyr::select(from, to, weight, cell_line, cancer_type)
+  
+  #vertices_df <- data.frame(name = unique(c(net_df$from, net_df$to)))
+
+  grph <- graph_from_data_frame(net_df, directed = TRUE, vertices = vertices_df)
+  return(grph)
+}
+
+## create separate graph for each cell line
+cell_lines <- unique(res$Cell_line)
+## use all vertices that could occure in any of the graphs
+vertices_df <- data.frame(name = unique(c(res$ligand, res$receptor)))
+grph_list <- lapply(setNames(cell_lines, cell_lines), function(n){
+  create_graph(res, cell_line = n)
+})
+
+
+##calculate the vertices degree for each graph(cell_line)
+
+grph_degrees <- lapply(setNames(names(grph_list), names(grph_list)), function(x){
+  grph <- grph_list[[x]]
+  grph_degrees_all <- strength(grph, mode = c("all"))
+  grph_degrees_out <- strength(grph, mode = c("out"))
+  grph_degrees_in <- strength(grph, mode = c("in"))
+  
+  grph_d <- do.call(cbind,
+               list("all_degree" = grph_degrees_all,
+                    "out_degree" = grph_degrees_out,
+                    "in_degree" = grph_degrees_in)) %>%
+    as.data.frame() %>% rownames_to_column("vertices") %>%
+    mutate(cell_line = x);
+  grph_d
+})
+
+## collect degrees in one data frame
+grph_degrees <- do.call(rbind, grph_degrees) %>% remove_rownames(.)
+grph_degrees <- merge(grph_degrees, cancer_type_mapping, by.x = "cell_line", by.y = "Cell_line", all.x = TRUE)
+## take mean graph degree over all cell lines
+grph_degrees_stats <- grph_degrees %>% group_by(vertices) %>% summarise(mean_all_degree = mean(all_degree), mean_out_degree = mean(out_degree), mean_in_degree = mean(in_degree), variance_all_degree = var(all_degree, na.rm = TRUE), n = n())
+
+## select the mast variable features to plot (most variable between all cell lines)
+most_variable_features <- head(grph_degrees_stats %>% arrange(desc(variance_all_degree)), n = 100)$vertices
+
+## craete heatmap
+DF <- grph_degrees %>% filter(vertices %in% most_variable_features)
+DF <- DF %>% dplyr::select(all_degree, cell_line, vertices) %>% pivot_wider(values_from = all_degree, names_from = cell_line) %>% column_to_rownames("vertices")
+mat <- as.matrix(DF)
+
+col_fun = colorRamp2(c(0,max(mat)/8,max(mat)/4, max(mat)/2, max(mat)), c( "white","green","blue","black", "red"))
+
+col_anno <- HeatmapAnnotation( cancer_type = merge(data.frame(Cell_line = colnames(mat)), cancer_type_mapping, by = "Cell_line")$Cancer_type)
+
+Heatmap(mat, name = "mat", col = col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        row_names_gp = gpar(fontsize = 4),
+        column_names_gp = gpar(fontsize = 4),
+        top_annotation = col_anno
+        )
+
+```
+
+## Prostate cancer
+
+```{r}
+## take mean graph degree just for Prostate cancer cell lines
+grph_degrees_stats <- grph_degrees %>% filter(Cancer_type == "Prostate Cancer") %>% group_by(vertices) %>% summarise(mean_all_degree = mean(all_degree), mean_out_degree = mean(out_degree), mean_in_degree = mean(in_degree), variance_all_degree = var(all_degree, na.rm = TRUE), n = n())
+
+## select the mast variable features to plot (most variable between all cell lines)
+most_variable_features <- head(grph_degrees_stats %>% arrange(desc(variance_all_degree)), n = 100)$vertices
+
+## craete heatmap
+DF <- grph_degrees %>% filter(Cancer_type == "Prostate Cancer", vertices %in% most_variable_features)
+DF <- DF %>% dplyr::select(all_degree, cell_line, vertices) %>% pivot_wider(values_from = all_degree, names_from = cell_line) %>% column_to_rownames("vertices")
+mat <- as.matrix(DF)
+
+
+col_fun = colorRamp2(c(0,1,5, 10, max(mat)), c( "white","green","blue","black", "red"))
+
+col_anno <- HeatmapAnnotation( cancer_type = merge(data.frame(Cell_line = colnames(mat)), cancer_type_mapping, by = "Cell_line")$Cancer_type)
+
+Heatmap(mat, name = "mat", col = col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        row_names_gp = gpar(fontsize = 6),
+        column_names_gp = gpar(fontsize = 6),
+        top_annotation = col_anno
+        )
+
+
+
+```
+## similarity
+
+```{r}
+
+
+```
+
+```{r}
+
+exp.data <- DotPlot(sobj, features = c("CD44"), group.by = "cell_line")$data
+exp.data <- merge(exp.data, cancer_type_mapping, by.x = "id", by.y = "Cell_line", all.x = TRUE)
+
+```
+
+
+```{r}
+## compute graph similarity between all graphs
+g_sim <- graph.intersection(a[[1]],
+                            a[[2]],
+                            a[[3]],
+                            a[[4]],
+                            a[[5]],
+                            a[[6]],
+                            a[[7]],
+                            a[[8]],
+                            a[[9]],
+                            a[[10]],
+                            a[[11]],
+                            a[[12]],
+                            a[[13]],
+                            a[[14]],
+                            a[[15]],
+                            a[[16]],
+                            a[[17]],
+                            a[[18]],
+                            a[[19]],
+                            a[[20]],
+                            a[[21]],
+                            a[[22]],
+                            
+                             byname = "auto", keep.all.vertices = FALSE)
+
+plot(g_sim, vertex.shape = "none", vertex.size = 1 , arrow.size = 0.1, arrow.width = 1, arrow.mode = 0)
+
+g_sim <- similarity(a[[1]], method = "jaccard", mode = "in")
+
+```

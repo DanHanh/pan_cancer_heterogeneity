@@ -52,7 +52,7 @@ metadata <- read.table(paste0(P,"./SCP542/metadata/Metadata.txt"), header = FALS
 colnames(metadata) <- header
 
 ## create a mapping of cell line to tumor type from metadata (metadata refers to already filtered cells, not all cells present)
-cancer_type_mapping <- metadata %>% select("Cell_line", "Cancer_type") %>% unique()
+cancer_type_mapping <- metadata %>% dplyr::select("Cell_line", "Cancer_type") %>% unique()
 
 ## manualy annotate some of the cell lines that are not present in metadata
 cell_type <- c("NCIH2196_LUNG", "SW1116_LARGE_INTESTINE", "BICR18_UPPER_AERODIGESTIVE_TRACT", "EFO27_OVARY", "SNU1076_UPPER_AERODIGESTIVE_TRACT", "SNU81_LARGE_INTESTINE", "OVKATE_OVARY", "SW1463_LARGE_INTESTINE", "SIMA_AUTONOMIC_GANGLIA")
@@ -124,6 +124,8 @@ for(n in names(sobj_split)){
 # b <- metadata$NAME
 
 ```
+
+
 
 
 

@@ -20,39 +20,30 @@ library(hash)
 library(Nebulosa)
 library(cluster)
 library(intrinsicDimension)
+library(SingleCellSignalR)
+#library(enrichR)
+library(ggside)
+library(ggVennDiagram)
+library(hpar)
+library(pheatmap)
+library(org.Hs.eg.db)
+library(htmlwidgets)
+library(gghalves)
+library(ComplexHeatmap)
 ################################################################################
 ## Functions  CellChat #########################################################
 ################################################################################
-
-cellchat_wraper <- function(object, group_ident = "cell_line", assay = "RNA", slot = "data"){
-    Idents(object) <- group_ident
-   
-    labels <- Seurat::Idents(object) ## in case the identities incluse 0, has to be renamed!
-    meta <- data.frame(group = labels, row.names = names(labels))
-    
-    #cc <- createCellChat(GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
-    cc <- createCellChat(object = GetAssayData(object, assay = assay, slot = slot), meta = meta, group.by = "group")
-    CellChatDB <- CellChatDB.human
-    cc@DB <- CellChatDB
-    
-    cc <- subsetData(cc)
-    
-    cc <- identifyOverExpressedGenes(cc)
-    cc <- identifyOverExpressedInteractions(cc)
-    
-    cc<- computeCommunProb(cc, raw.use = TRUE, do.fast = TRUE, nboot = 100)
-    cc <- filterCommunication(cc, min.cells = 1)
-    df <- subsetCommunication(cc, thresh = 1)
-    df$p.adj <- p.adjust(df$pval, "BH")
-    
-    return(df)
-}
 
 
 ```
 
 
-## R Markdown
+## R Markdown {.tabset}
+
+Scientific question:
+What type of signaling is commonly occurring inside cancer cell line and PDX models?
+
+### Pan-Cancer data
 
 ```{r}
 
@@ -64,21 +55,17 @@ sobj <- readRDS("./../local/SeuratObject.rds")
 ## add Cancer types to data
 cancer_type_mapping <- readRDS("./../local/cancer_type_mapping.rds")
 df_mapped <- data.frame(Cell_line = sobj@meta.data$cell_line)
+# first add index to colum (1:nbr of cancer types) so the merged results can later be sorted by that index, prevents that order gets mixed up
 df_mapped <- cbind(df_mapped, data.frame(ID = 1:nrow(df_mapped))) %>% merge(cancer_type_mapping, by = "Cell_line", all.x = TRUE, sort = FALSE ) %>% arrange(ID)
-## doublecheck if still in the correct order?
-table(df_mapped$Cell_line == sobj@meta.data$cell_line)
-sobj@meta.data$Cancer_type <- df_mapped$Cancer_type
+# assign cancer type to each cell line
+sobj@meta.data$Cancer_type <-  df_mapped$Cancer_type
 
-
-
-#sobj_sub <- subset(sobj, subset = Cancer_type == "Prostate Cancer")
-#sobj_sub <- subset(sobj_sub, subset = pool_id == "22")
 ```
 
 
 
 
-## overview of all the data
+#### overview of all the data
 
 ```{r}
 
@@ -88,27 +75,7 @@ DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_RNA", label = FALSE)
 
 ```
 
-## How do the cell cluster based on pools
- 
-The cells are analysed by their RNA assay and grouped based on their pool_id. 
-recalculate the UMAP, to get a better representation of the subsamples
-
-```{r}
-# 
-# pool_ids <- unique(sobj@meta.data$pool_id)
-# 
-# for(i in pool_ids){
-#     print(i)
-#     sobj_sub <- subset(sobj, subset = pool_id == i)
-#     sobj_sub <- RunPCA(sobj_sub, assay = "RNA")
-#     sobj_sub <- RunUMAP(sobj_sub, dims = 1:30, assay = "RNA", reduction = "pca")
-#     print(DimPlot(sobj_sub, group.by = "Cancer_type", reduction = "umap", label = FALSE) + ggtitle(paste0("pool_", i)) )
-# }
-# theme(legend.position = "none")
-
-```
-
-## amount of cells by pool and cancer type
+#### amount of cells by pool and cancer type
 
 ```{r}
 metadata <- sobj@meta.data %>% group_by(pool_id, Cancer_type, cell_line) %>% summarise(nbr_of_cells = n())
@@ -118,20 +85,27 @@ p <- ggplot(metadata, aes(x = pool_id , y = nbr_of_cells, fill = Cancer_type )) 
 #    facet_grid(.~subtype, scale = "free", space = "free") + labs(title = lev)+ facet_grid(.~pool_id, drop = TRUE, scales = "free", space = "fixed")+ theme(legend.position = "none")
 p
 
+
+
 ```
 
-## amount of cells by cancer type
+#### amount of cells by cancer type
 
 ```{r}
 metadata <- sobj@meta.data %>% group_by(pool_id, Cancer_type, cell_line) %>% summarise(nbr_of_cells = n())
 
-p <- ggplot(metadata, aes(x = Cancer_type , y = nbr_of_cells, fill = Cancer_type )) +
-    geom_bar(stat = "sum", position = "stack")  + theme_bw() + scale_fill_manual(values=c(kelly()[1:length(kelly())])) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(legend.position = "none")
+color_sceme <- rep(c(kelly()[2:length(kelly())]),15)
+
+p <- ggplot(metadata, aes(x = Cancer_type , y = nbr_of_cells, fill = cell_line )) +
+    geom_bar(stat = "sum", position = "stack")  + theme_bw() + scale_fill_manual(values=color_sceme) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(legend.position = "none") + labs(title = "Pan-cancer Data set", caption = "Colored by cell lines") +
+  xlab("Cancer type") + ylab("Number of cells")
 #    facet_grid(.~subtype, scale = "free", space = "free") + labs(title = lev)+ facet_grid(.~pool_id, drop = TRUE, scales = "free", space = "fixed")+ theme(legend.position = "none")
 p
 
-```
+#ggsave(file = "./../local/pictures/dataset_overview.svg", plot = p, width = 8, height = 6)
 
+```
+#### some basic quality featuers
 
 ```{r, fig.width = 12, fig.height = 8}
 
@@ -141,87 +115,149 @@ DefaultAssay(sobj) <- "RNA"
  VlnPlot(sobj, features = "nFeature_RNA", pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
  VlnPlot(sobj, features = "mito_percent", pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
 
+ DF<-  VlnPlot(sobj, features = c("nFeature_RNA"), pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
+ DF <- DF$data
+ 
 
-
-
-# features <- c("MDK", "NCL")
-# DimPlot(sobj, group.by = "Cancer_type", reduction = "umap_integrated")
-# Nebulosa::plot_density(sobj, features = features, reduction = "umap_integrated")
-# 
-# VlnPlot(sobj, features = features, group.by = "Cancer_type", pt.size = 0)
-
+p <- ggplot(DF, aes(x = ident, y = nFeature_RNA, fill = ident)) +
+   geom_half_violin(side = "l") +
+   geom_half_boxplot(side = "r", outlier.color = NA) +
+   scale_y_continuous(trans='log10') +
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+   theme(legend.position="none") + labs(title = "") + scale_fill_manual(values = kelly()[3:length(kelly())]) +
+   facet_grid(~ident, space = "free", scales = "free_x", shrink = TRUE) + 
+   annotation_logticks(side = "l", outside = FALSE, scaled = TRUE) + coord_cartesian(clip = "off") +
+   xlab("Sequencing pool") + ylab("Number of unique features per cell")
+ p
+ ggsave(file = "./../local/pictures/nfeature_RNA_by_pool.svg", plot = p, width = 8, height = 6)
+ 
+ p <- ggplot(DF, aes(x = split, y = nFeature_RNA, fill = split)) +
+   geom_half_violin(side = "l") +
+   geom_half_boxplot(side = "r", outlier.color = NA) +
+   scale_y_continuous(trans='log10') +
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+   theme(legend.position="none") + labs(title = "") + scale_fill_manual(values = kelly()[1:length(kelly())]) +
+   annotation_logticks(side = "l", outside = FALSE, scaled = TRUE) + coord_cartesian(clip = "off") +
+   xlab("Cancer type") + ylab("Number of unique features per cell")
+ p 
+ ggsave(file = "./../local/pictures/nfeature_RNA_by_cancertype.svg", plot = p, width = 8, height = 6)
+ 
+ ## with mito percent
+DF<-  VlnPlot(sobj, features = c("mito_percent"), pt.size = 0, group.by = "pool_id", split.by = "Cancer_type")
+DF <- DF$data
+ 
+ p <- ggplot(DF, aes(x = ident, y = mito_percent, fill = ident)) +
+   geom_half_violin(side = "l") +
+   geom_half_boxplot(side = "r", outlier.color = NA) +
+   #scale_y_continuous(trans='log10') +
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+   theme(legend.position="none") + labs(title = "") + scale_fill_manual(values = kelly()[1:length(kelly())]) +
+   xlab("Sequencing pool") + ylab("Percent of mitochondrial reads")
+ p 
+  ggsave(file = "./../local/pictures/percent_mito_by_pool.svg", plot = p, width = 8, height = 6)
+ 
+  p <- ggplot(DF, aes(x = split, y = mito_percent, fill = split)) +
+   geom_half_violin(side = "l") +
+   geom_half_boxplot(side = "r", outlier.color = NA) +
+   #scale_y_continuous(trans='log10') +
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+   theme(legend.position="none") + labs(title = "") + scale_fill_manual(values = kelly()[1:length(kelly())]) +
+   xlab("Cancer type pool") + ylab("Percent of mitochondrial reads")
+ p 
+  ggsave(file = "./../local/pictures/percent_mito_by_cancertype.svg", plot = p, width = 8, height = 6)
+ 
 ```
 
 
-END
 
-## try to subcluster for single cancer type before communication inference
+## SingleCellSingalR with omnipathr
 
+Overlap between the omni and LRdb is not optimal! overall there seem to be more unique communication found in omni compared to LRdb
 
 ```{r}
-## Omnipather
+
+# ## Omnipather
 library(OmnipathR)
-## best tools based on https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02783-y: c("CellChat","CellPhoneDB", "NicheNet", "ICELLNET")
-ressources <- c("CellChatDB")
-CellChatDB <- CellChatDB.human
+
+omni_DB <- liana::select_resource("Consensus")[[1]]
+
+omni_DB <- omni_DB %>% mutate(ligand = source_genesymbol, receptor = target_genesymbol) %>% relocate(ligand, receptor)
+
+original_DB <- LRdb
 
 
+ID_1 <- unique(paste0(omni_DB$ligand, "_", omni_DB$receptor))
+ID_2 <- unique(paste0(original_DB$ligand, "_", original_DB$receptor))
 
-net <- OmnipathR::import_intercell_network(ressources = ressources)
-net_2 <- net %>% OmnipathR::filter_intercell_network(simplify = TRUE)
+ggVennDiagram(list(omni = ID_1, LRdb = ID_2), color = 1, lwd = 0.7) + 
+ scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
+ theme(legend.position = "none") + ggtitle("ligand-receptor pair overlap between the two databases")
 
+# clean up
+rm(ID_1, ID_2, original_DB)
 ```
 
-## SingleCellSingalR
+
+
 
 ```{r}
 ## get autocrine signalings
-library(SingleCellSignalR)
-
 DefaultAssay(sobj) <- "RNA"
-## add cell line name alone to metadata
-sobj@meta.data$Cell_line <- unlist(sapply(sobj@meta.data$cell_line,simplify = FALSE,USE.NAMES = FALSE, function(x){unlist(strsplit(x, split = "_"))[1]}))
 
-cell_lines_by_cancer_type <- sobj@meta.data %>% select(Cancer_type, Cell_line) %>%group_by(Cancer_type) %>% summarise(Cell_lines = toString(unique(Cell_line), collapse = ","))
-
-## replace cell line names with integer (necessary for SingleCelSingnalR)
-Cell_line_mapping <- 1:length(unique(sobj@meta.data$Cell_line))
-names(Cell_line_mapping) <- unique(sobj@meta.data$Cell_line)
-
-sobj@meta.data$Cell_line_ID <- unlist(sapply(sobj@meta.data$Cell_line, simplify = FALSE, USE.NAMES = FALSE, function(x){
-  Cell_line_mapping[x]
-}))
+# Cell_line_mapping <- data.frame(cell_line = unique(sobj@meta.data$cell_line))
+# Cell_line_mapping$cell_line_nbr <- 1:nrow(Cell_line_mapping)
+# 
+# Cell_line_mapped <- data.frame(cell_line = sobj@meta.data$cell_line)
+# Cell_line_mapped$ID <- 1:nrow(Cell_line_mapped)
+# Cell_line_mapped <- Cell_line_mapped %>% merge(Cell_line_mapping, by = "cell_line") %>% arrange(ID)
+# sobj@meta.data$Cell_line_ID <- Cell_line_mapped$cell_line_nbr
 
 if(FALSE){
   ## make for loop over all cell lines (full data to big)
   res_list <- list()
-  for(i in unique(sobj@meta.data$Cell_line)){
+  for(i in unique(sobj@meta.data$cell_line)){
     print(i)
-    object <- subset(sobj, Cell_line == i)
+    object <- subset(sobj, cell_line == i)
     ## get cancer type
     ct <- unique(object@meta.data$Cancer_type)
     #cluster = object@meta.data$Cell_line_ID
-    cluster = rep(1, length(object$Cell_line))
+    cluster = rep(1, length(object$cell_line))
     data=data.frame(object[['RNA']]@data)
     ## set s.score to 0 to keep all results, better for robust rank aggregation
-    signal=cell_signaling(data=data,genes=row.names(object),cluster=cluster,int.type = "autocrine", species = "homo sapiens", s.score = 0, write = FALSE)
+    
+  ## overwrite LRdb ressource, so the custom ressourse is used
+    LRdb <- omni_DB
+    signal=cell_signaling(data=data, 
+                          genes=row.names(object),
+                          cluster=cluster,
+                          int.type = "autocrine",
+                          species = "homo sapiens",
+                          s.score = 0, write = FALSE)
     signal <- as.data.frame(unlist(signal, recursive = FALSE)) %>% mutate(Cell_line = i, Cancer_type = ct)
+    
     res_list[[i]] <- signal
     
   }
-  saveRDS(res_list, "./../local/signal_list.rds")
+  saveRDS(res_list, "./../local/signal_list_omni.rds")
 }
 
-res_list <- readRDS("./../local/signal_list.rds") 
+################################################################################
+## process signaling
 
-res <- do.call(rbind, res_list) %>% remove_rownames(.) %>% rename(
+res_list <- readRDS("./../local/signal_list_omni.rds") 
+`
+res <- do.call(rbind, res_list) %>% remove_rownames(.) %>% dplyr::rename(
   ligand = cluster.1.cluster.1.cluster.1,
   receptor = cluster.1.cluster.1.cluster.1.1,
   score = cluster.1.cluster.1.LRscore, type = cluster.1.cluster.1.interaction.type) %>% mutate(ID = paste0(ligand, "_", receptor))
 
 ## summarise amount of autocrine signaling based on cell line
-
-DF_stats <- res %>% group_by(Cell_line, Cancer_type) %>% summarise(n = n())
+`
+DF_stats <- res %>% filter(score >= 0.5) %>% group_by(Cell_line, Cancer_type) %>% summarise(n = n())
 
 DT::datatable(DF_stats)
 
@@ -232,7 +268,7 @@ ggplot(DF_stats, aes(Cancer_type ,n, fill = Cell_line)) +
     scale_fill_manual(values=c(rep(kelly()[2:length(kelly())], 20))) + 
     labs(title = "Number of infered communication by cancer type (colored by cell line)")
 
-#### aggregate results over all cell lines (find commonly found communications in cancer)
+
 aggregate_ranks <- function(ranked_list){
     # aggregate ranks
     agg_ranks <- aggregateRanks(ranked_list, method = "RRA")
@@ -242,31 +278,445 @@ aggregate_ranks <- function(ranked_list){
     # Then correct for multiple testing for each performed test (ID)
     agg_ranks$Score.adj <- agg_ranks$Score * length(ranked_list)
     agg_ranks$Score.adj <- p.adjust(agg_ranks$Score.adj, "BH")
-    agg_ranks <- agg_ranks %>% rename(ID = Name)
+    agg_ranks <- agg_ranks %>% dplyr::rename(ID = Name)
     return(agg_ranks)
 }
 
+```
 
+
+steps performed:
+  - get ligand-receptor database from omnipathr (with liana package)
+  - subset seurat object to each cell line
+  - run singleCellSignalR on autocrine mode for each cell line and collect results in list (threshold set to LRscore 0, keep all results)
+  - get ranked list for each cell line  (LRscore from singlecellsingalR)
+  - rank aggregation from ranked list with RRA( resulting score adjusted by multiplying with length(rankged_list) and afterwards BH correction on scores)
+  - as numeric value the mean score of the LR_score is used (mean over corresponding group (all, all of cancer type x, all of cell line x (for cell line just one score per cell line)))
+  - for heatmaps the top 20 (by mean_score) of each group member is used (Cancer_type, Cell_line)
+
+#### all cancer types/lines
+```{r}
+#### aggregate results over all cell lines (find commonly found communications in cancer)
 ranked_list <- lapply(setNames(unique(res$Cell_line),unique(res$Cell_line)), function(i){
   r <- res %>% filter(Cell_line == i) %>% arrange(desc(score));
-  r$ID
+  unique(r$ID)
 })
 
-agg_res <- aggregate_ranks(ranked_list)
+aggregation_res <- aggregate_ranks(ranked_list) %>% arrange(Score.adj, Score)
+## add rank to results
+aggregation_res <- aggregation_res %>% mutate(rank = 1:nrow(aggregation_res))
 
+## merge back together initial results with aggregation rank
+agg_res <- merge(res, aggregation_res, by = "ID" , all = TRUE)
+# remove non significant results
+agg_res <- agg_res %>% filter(Score.adj < 0.05) %>% group_by(ID, ligand, receptor, type, Score, Score.adj, rank) %>% summarise(mean_score = mean(score), variance = var(score)) %>%  arrange(Score.adj, Score,  desc(mean_score))
+#n_Cancer_types = length(unique(Cancer_type)), n_Cell_lines = length(unique(Cell_line)), Cancer_types = toString(unique(Cancer_type), collapse = ",") , Cell_lines = toString(unique(Cell_line), collapse = ",") # not useful here
+# additionally remove results where the mean score is below the 0.5 threshold, resulting in a list of signals found across cancer lines
+agg_res <- agg_res %>% filter(mean_score > 0.5)
+
+## aggregation results all
 DT::datatable(agg_res)
 
-## aggregate ranks only for prostate cancer lines (LNCAPCLONEFGC, PC3)
 
-ranked_list <- lapply(setNames(c("LNCAPCLONEFGC", "PC3"),c("LNCAPCLONEFGC", "PC3")), function(i){
-  r <- res %>% filter(Cell_line == i) %>% arrange(desc(score));
-  r$ID
-})
 
-agg_res <- aggregate_ranks(ranked_list)
-# no significant results for aggregation!
-DT::datatable(agg_res)
+
+
+
+
+
+
 
 
 ```
 
+##### LAMB1, COL4A1 
+
+If results with lower mean score than 0.5 are removed, COL4A1 does not show up signaling anymore (it is significant, but not above mean score 0.5)
+LAMB1 still shows up once, with a mean_score slightly above the threshold (0.54 LAMB1_CD44)
+
+```{r}
+### LAMB1 COL4A1 significant?
+DT::datatable(agg_res[(grepl("LAMB1", agg_res$ID) | grepl("COL4A1", agg_res$ID)),] %>% filter(Score.adj < 0.05))
+
+
+```
+
+
+
+##### Heatmap by cancer type (top 20 for each)
+
+```{r}
+#### create heatmap by cancer type
+
+## merge together on the level of cancer type
+agg_res_cancertype <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+agg_res_cancertype <- agg_res_cancertype %>% group_by(ID, ligand, receptor, type, Score, Score.adj, rank, Cancer_type) %>% summarise(mean_score = mean(score), Cell_lines = toString(unique(Cell_line), collapse = ","))
+# do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# take only top 20 interactions for each cancer type
+used_features <- agg_res_cancertype %>% group_by(Cancer_type) %>% slice_max(mean_score, n = 20)
+used_features <- unique(used_features$ID)
+# only use selected features for heatmap
+agg_res_cancertype_df <- agg_res_cancertype %>% filter(ID %in% used_features)
+
+DF <- agg_res_cancertype_df
+DF <- DF %>%  ungroup() %>% dplyr::select(ID, Cancer_type, mean_score) %>% pivot_wider(names_from = Cancer_type, values_from = mean_score)
+mat <- DF %>% ungroup() %>% column_to_rownames("ID")
+
+svg("heatmap_by_cancer_type_top20.svg", height = 15, width = 15)
+  pheatmap(mat, fontsize = 5)
+dev.off()
+print(pheatmap(mat))
+
+a <- agg_res_cancertype_df %>% group_by(ID) %>% summarise(variance = var(mean_score))
+
+
+ ###############################################################################
+ ## How does the grph look like
+# net_df <- agg_res_cancertype %>% ungroup()  %>% filter( mean_score > 0.5) %>% dplyr::rename(from = ligand, to = receptor, score = mean_score, cancer_type = Cancer_type) %>% dplyr::select(from, to, score, cancer_type)# %>% group_by(from, to) %>% summarise(score = sum(score))
+# 
+# vertices_df <- data.frame(name = unique(c(net_df$from, net_df$to)))
+# 
+# 
+# grph_1 <- graph_from_data_frame(net_df, directed = TRUE, vertices = vertices_df)
+# grph_1
+# plot(grph_1, vertex.shape = "none", vertex.size = 1 , arrow.size = 0.1, arrow.width = 1, arrow.mode = 0)
+################################################################################
+## what if we only look at the receptor site?
+
+# agg_res_cancertype <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+# agg_res_cancertype <- agg_res_cancertype %>% group_by(receptor, type, Cancer_type) %>% summarise(mean_score = mean(score), mean_Score = mean(Score), mean_Score.adj = mean(Score.adj), Cell_lines = toString(unique(Cell_line), collapse = ","))
+# 
+# # do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# # take only top 20 interactions for each cancer type
+# used_features <- agg_res_cancertype %>% group_by(Cancer_type) %>% slice_max(mean_score, n = 20)
+# used_features <- unique(used_features$receptor)
+# # only use selected features for heatmap
+# agg_res_cancertype_df <- agg_res_cancertype %>% filter(receptor %in% used_features)
+# 
+# DF <- agg_res_cancertype_df
+# DF <- DF %>%  ungroup() %>% dplyr::select(receptor, Cancer_type, mean_score) %>% pivot_wider(names_from = Cancer_type, values_from = mean_score)
+# mat <- DF %>% ungroup() %>% column_to_rownames("receptor")
+# 
+# svg("heatmap_by_cancer_type_receptor_top20.svg", height = 15, width = 15)
+#   pheatmap(mat, fontsize = 5)
+# dev.off()
+# 
+# ## calculate variance 
+# a <- agg_res_cancertype_df %>% group_by(receptor) %>% summarise(variance = var(mean_score))
+
+```
+
+
+##### Heatmap by cancer type (Prostate only)(top 20 for each)
+
+```{r}
+#### create heatmap by cancer type
+
+## merge together on the level of cancer type
+agg_res_cancertype <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+agg_res_cancertype <- agg_res_cancertype %>% group_by(ID, ligand, receptor, type, Score, Score.adj, rank, Cancer_type) %>% summarise(mean_score = mean(score), Cell_lines = toString(unique(Cell_line), collapse = ","))
+# do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# take only top 20 interactions for prostate cancer
+used_features <- agg_res_cancertype %>% group_by(Cancer_type) %>% slice_max(mean_score, n = 50) %>% filter(Cancer_type == "Prostate Cancer")
+used_features <- unique(used_features$ID)
+# only use selected features for heatmap
+agg_res_cancertype_df <- agg_res_cancertype %>% filter(ID %in% used_features)
+
+DF <- agg_res_cancertype_df
+DF <- DF %>%  ungroup() %>% dplyr::select(ID, Cancer_type, mean_score) %>% pivot_wider(names_from = Cancer_type, values_from = mean_score)
+mat <- DF %>% ungroup() %>% column_to_rownames("ID")
+
+svg("heatmap_by_Prostate_cancer_top20.svg", height = 15, width = 15)
+  pheatmap(mat, fontsize = 5)
+dev.off()
+print(pheatmap(mat))
+
+ #a <- agg_res_cancertype_df %>% group_by(ID) %>% summarise(variance = var(mean_score))
+
+
+################################################################################
+## what if we only look at the receptor site?
+
+# agg_res_cancertype <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+# agg_res_cancertype <- agg_res_cancertype %>% group_by(receptor, type, Cancer_type) %>% summarise(mean_score = mean(score), mean_Score = mean(Score), mean_Score.adj = mean(Score.adj), Cell_lines = toString(unique(Cell_line), collapse = ","))
+# 
+# # do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# # take only top 20 interactions for each cancer type
+# used_features <- agg_res_cancertype %>% group_by(Cancer_type) %>% slice_max(mean_score, n = 20)
+# used_features <- unique(used_features$receptor)
+# # only use selected features for heatmap
+# agg_res_cancertype_df <- agg_res_cancertype %>% filter(receptor %in% used_features)
+# 
+# DF <- agg_res_cancertype_df
+# DF <- DF %>%  ungroup() %>% dplyr::select(receptor, Cancer_type, mean_score) %>% pivot_wider(names_from = Cancer_type, values_from = mean_score)
+# mat <- DF %>% ungroup() %>% column_to_rownames("receptor")
+# 
+# svg("heatmap_by_cancer_type_receptor_top20.svg", height = 15, width = 15)
+#   pheatmap(mat, fontsize = 5)
+# dev.off()
+# 
+# ## calculate variance 
+# a <- agg_res_cancertype_df %>% group_by(receptor) %>% summarise(variance = var(mean_score))
+
+```
+
+##### Heatmap by cell line (top 20 for each)
+
+
+```{r}
+## merge together on the level of cell line
+agg_res_cellline <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+agg_res_cellline <- agg_res_cellline %>% group_by(ID, ligand, receptor, type, Score, Score.adj, rank, Cancer_type, Cell_line) %>% summarise(mean_score = mean(score))
+# do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# take only top 20 interactions for each cellline
+used_features <- agg_res_cellline %>% group_by(Cell_line) %>% slice_max(mean_score, n = 20)
+used_features <- unique(used_features$ID)
+# only use selected features for heatmap
+agg_res_cellline_df <- agg_res_cellline %>% filter(ID %in% used_features)
+
+DF <- agg_res_cellline_df
+DF <- DF %>%  ungroup() %>% dplyr::select(ID,  Cell_line, mean_score) %>% pivot_wider(names_from = Cell_line, values_from = mean_score)
+mat <- DF %>% ungroup() %>% column_to_rownames("ID")
+col_annotation <- data.frame(Cell_line = colnames(mat), ID = 1: length(colnames(mat))) %>% merge(cancer_type_mapping, by = "Cell_line") %>% arrange(ID) %>% column_to_rownames("Cell_line") %>% dplyr::select(Cancer_type)
+
+svg("heatmap_by_cell_line_top20.svg", height = 15, width = 15)
+  pheatmap(mat, fontsize = 3.5, cluster_rows = FALSE, annotation_col = col_annotation)
+dev.off()
+print(pheatmap(mat, annotation_row = DF$Cancer_type, cluster_rows = FALSE))
+
+
+################################################################################
+## what if we only look at the receptor site?
+
+# ## merge together on the level of cell line
+# agg_res_cellline <- merge(res, aggregation_res, by = "ID" , all = TRUE) #%>% filter(Score.adj < 0.05)
+# agg_res_cellline <- agg_res_cellline %>% group_by(receptor, type, Cancer_type, Cell_line) %>% summarise(mean_score = mean(score), mean_Score = mean(Score), mean_Score.adj = mean(Score.adj))
+# # do not filter out results with mean_score below 0.5. Because they are needed for heatmap visualization
+# # take only top 20 interactions for each cellline
+# used_features <- agg_res_cellline %>% group_by(Cell_line) %>% slice_max(mean_score, n = 20)
+# used_features <- unique(used_features$ID)
+# # only use selected features for heatmap
+# agg_res_cellline_df <- agg_res_cellline %>% filter(ID %in% used_features)
+# 
+# DF <- agg_res_cellline_df
+# DF <- DF %>%  ungroup() %>% dplyr::select(ID,  Cell_line, mean_score) %>% pivot_wider(names_from = Cell_line, values_from = mean_score)
+# mat <- DF %>% ungroup() %>% column_to_rownames("ID")
+# col_annotation <- data.frame(Cell_line = colnames(mat), ID = 1: length(colnames(mat))) %>% merge(cancer_type_mapping, by = "Cell_line") %>% arrange(ID) %>% column_to_rownames("Cell_line") %>% dplyr::select(Cancer_type)
+# 
+# svg("heatmap_by_cell_line_top20.svg", height = 15, width = 15)
+#   pheatmap(mat, fontsize = 3.5, cluster_rows = FALSE, annotation_col = col_annotation)
+# dev.off()
+# pheatmap(mat)
+# pheatmap(mat, annotation_row = DF$Cancer_type, cluster_rows = FALSE)
+
+
+```
+
+
+##### Expression Pattern from features over cell lines
+ 
+```{r}
+# features <- c("LAMB1", "COL4A1")
+# 
+#  DF_orig <- DotPlot(sobj,assay = "RNA", features = features, group.by = "cell_line")[["data"]]
+#  DF <- DF_orig %>% dplyr::select(!avg.exp.scaled) %>% pivot_wider(names_from = "features.plot", values_from = c("avg.exp", "pct.exp"))
+# 
+#  DF_dt <- DT::datatable(DF)
+#  DF_dt
+#  #saveWidget(DF_dt, file = "LAMB1_COL4A1_expression.html", title = "LAMB1,COL4A1 expression by cell line")
+# 
+# 
+#  p_1 <- ggplot(DF_orig, aes(x = features.plot, y = avg.exp, fill = features.plot)) +
+#    geom_half_violin(side = "l") +
+#    geom_half_boxplot(side = "r", outlier.color = NA) +
+#    #scale_y_continuous(trans='log10') +
+#    theme_bw() +
+#    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+#    theme(legend.position="none") + labs(title = "") + scale_fill_manual(values = kelly()[3:length(kelly())]) +
+#    coord_flip()
+#  p_1
+
+```
+
+
+
+
+```{r}
+# #### aggregate results for prostate cancer lines
+# 
+# ## aggregate ranks only for prostate cancer lines (LNCAPCLONEFGC, PC3)
+# 
+# ranked_list <- lapply(setNames(c("LNCAPCLONEFGC", "PC3"),c("LNCAPCLONEFGC", "PC3")), function(i){
+#   r <- res %>% filter(Cell_line == i) %>% arrange(desc(score));
+#   r$ID
+# })
+# 
+# 
+# # ranked_list <- lapply(setNames(c("LNCAPCLONEFGC", "PC3"),c("LNCAPCLONEFGC", "PC3")), function(i){
+# #   r <- res %>% filter(Cell_line == i) %>% filter(score > 0.5) %>% arrange(desc(score));
+# #   r$ID
+# # })
+# 
+# 
+# agg_res <- aggregate_ranks(ranked_list)
+# # no significant results for aggregation!
+# DT::datatable(agg_res)
+# 
+# 
+# 
+# ## list the two prostate cancer line results separately
+# 
+# ##LNCAPCLONEFGC
+# lncap <- res %>% filter(score >= 0.5) %>% filter(Cell_line == "LNCAPCLONEFGC")
+# DT::datatable(lncap)
+# 
+# ##PC3
+# pc3 <- res %>% filter(score >= 0.5) %>% filter(Cell_line == "PC3")
+# DT::datatable(pc3)
+# 
+# ggVennDiagram(list(pc3 = pc3$ID, lncap = lncap$ID), color = 1, lwd = 0.7) + 
+#  scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
+#  theme(legend.position = "none")
+# 
+# 
+# ## get human protein atlas data
+# #data(hpaCancer)
+# #hpa_prostate <- hpaCancer %>% filter(Cancer == "prostate cancer")
+# # unfavorable markers for prostate cancer
+# #unfavorable_prostate <- hpa_prostate %>% filter(!is.na(prognostic.unfavorable) | !is.na(unprognostic.unfavorable) )
+# ## found as ligands/receptors in significant signaling
+# # none of the unfavorable markers is found in the list of signals (for bot PCa cell lines)
+# # lapply(unique(res$Cell_line), function(x){
+# #   r <- res %>% filter(score >= 0.5) %>% filter(Cell_line == x);
+# #   sum(unfavorable_prostate$Gene.name %in% unique(c(r$ligand, lncap$receptor)))
+# # })
+# # 
+# # sum(unfavorable_prostate$Gene.name %in% unique(c(lncap$ligand, lncap$receptor)))
+# # sum(unfavorable_prostate$Gene.name %in% unique(c(pc3$ligand, pc3$receptor)))
+
+
+```
+
+### Prostate
+
+
+```{r}
+
+
+
+```
+
+
+
+#### select most variable features based on LR score
+
+```{r}
+
+res_list <- readRDS("./../local/signal_list_omni.rds") 
+
+res <- do.call(rbind, res_list) %>% remove_rownames(.) %>% dplyr::rename(
+  ligand = cluster.1.cluster.1.cluster.1,
+  receptor = cluster.1.cluster.1.cluster.1.1,
+  score = cluster.1.cluster.1.LRscore, type = cluster.1.cluster.1.interaction.type) %>% mutate(ID = paste0(ligand, "_", receptor))
+
+
+# res_2 <- res %>% group_by(ID, Cancer_type) %>% summarise(mean_score = mean(score)) %>% group_by(ID) %>% summarise(mean_mean_score = mean(mean_score),variance = var(mean_score), n = n(), Cancer_types = toString(Cancer_type, collapse = ",")) %>% filter(mean_mean_score > 0.5)
+
+res_2 <- res %>% group_by(ID, Cell_line) %>% summarise(mean_score = mean(score), variance = var(score), n = n())  %>% filter(mean_mean_score > 0.5)
+
+
+## select the mast variable features to plot (most variable between all cell lines)
+most_variable_features <- head(res_2 %>% arrange(desc(res_2)), n = 100)$ID
+
+## craete heatmap
+DF <- res %>% filter(ID %in% most_variable_features)
+DF <- DF %>% dplyr::select(score, Cell_line, ID) %>% pivot_wider(values_from = score, names_from = Cell_line) %>% column_to_rownames("ID")
+mat <- as.matrix(DF)
+
+
+col_fun = colorRamp2(c(0,0.5,1), c( "white","green", "red"))
+
+col_anno <- HeatmapAnnotation( cancer_type = merge(data.frame(Cell_line = colnames(mat)), cancer_type_mapping, by = "Cell_line")$Cancer_type)
+
+Heatmap(mat, name = "mat", col = col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        row_names_gp = gpar(fontsize = 6),
+        column_names_gp = gpar(fontsize = 6),
+        top_annotation = col_anno
+        )
+
+
+
+```
+
+
+
+
+
+### PDX models
+
+## PDX data
+
+```{r}
+# 
+# 
+# h5 <- Seurat::Read10X_h5("./../local/PDX_data/pdx_LNCaP_filtered_feature_bc_matrix_1.h5")
+# 
+# sobj <- CreateSeuratObject(h5, min.cells = 1, min.features = 1)
+# 
+# human_features <- rownames(sobj@assays[["RNA"]])[grep(pattern = "GRCh38",rownames(sobj@assays[["RNA"]]), invert = FALSE)]
+# mouse_features <- rownames(sobj@assays[["RNA"]])[grep(pattern = "GRCm38",rownames(sobj@assays[["RNA"]]), invert = FALSE)]
+# 
+# human_counts <- sobj@assays[["RNA"]]@counts[human_features,] %>% colSums()
+# mouse_counts <- sobj@assays[["RNA"]]@counts[mouse_features,] %>% colSums()
+# 
+# sobj@meta.data[["percent_mouse_counts"]] <- (mouse_counts / (human_counts + mouse_counts))
+# DF <- data.frame(percent_mouse = sobj@meta.data[["percent_mouse_counts"]])
+# 
+# ## as we would expect the cells have either predominent human or mouse aligned reads. only a small amount of cells fall in between. based on the histogram the cutoff value is set to 0.25, to be rather strict in removing potential mouse cells.
+# ggplot(DF, aes(x = percent_mouse)) + geom_histogram(boundary = 0, binwidth = 0.02, fill = "black", colour = "white") +
+#   theme_bw() + labs(title = "Percent of reads maped to the mouse reference")
+# 
+# ## remove mouse cells
+# object <- subset(sobj, subset = percent_mouse_counts <= 0.25)
+# 
+# ## subset to only human features
+# object <- object[human_features,]
+# 
+# ## remove feature name "GRCh38-" from feature names (new seurat object has to be created)
+# 
+# tmp_assay <- object@assays[["RNA"]]@counts
+# tmp_meta_df <- object@meta.data
+# new_feature_names <- sub(pattern = "^GRCh38-",replacement = "" ,x = rownames(tmp_assay))
+# rownames(tmp_assay) <- new_feature_names
+# 
+# object <- CreateSeuratObject(counts = tmp_assay, meta.data = tmp_meta_df)
+# 
+# object <- object %>% NormalizeData()
+# 
+# # calculate autocrine signaing
+# cluster = rep(1, length(object$orig.ident))
+# data=data.frame(object[['RNA']]@data)
+# ## set s.score to 0 to keep all results, better for robust rank aggregation
+# signal=cell_signaling(data=data,genes=row.names(object),cluster=cluster,int.type = "autocrine", species = "homo sapiens", s.score = 0, write = FALSE)
+# 
+# pdx_res_signal <- signal[["cluster 1-cluster 1"]] 
+# colnames(pdx_res_signal)[1] <- "cluster1.1"
+# colnames(pdx_res_signal)[2] <- "cluster1.2" 
+# pdx_res_signal <- pdx_res_signal %>% mutate(ID = paste0(cluster1.1, "_", cluster1.2))  %>% filter(LRscore > 0.5)
+# 
+# ## Venn Diagram
+# ggVennDiagram(list(pc3 = pc3$ID, lncap = lncap$ID, pdx = pdx_res_signal$ID), color = 1, lwd = 0.7) + 
+#  scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
+#  theme(legend.position = "none")
+# 
+# ##
+# TF_1 <- pdx_res_signal$ID %in% lncap$ID
+# TF_2 <- pdx_res_signal$ID %in% pc3$ID
+# 
+# ## In pdx and lncap but not pc3
+# 
+# res <- pdx_res_signal[TF_1 & !(TF_2),]
+# DT::datatable(res)
+```
